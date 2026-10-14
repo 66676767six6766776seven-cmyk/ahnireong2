@@ -8,7 +8,7 @@ const GOAL = 387000;
 // 100번이 모이면 모두에게 동시에 시작되고, 25초 동안 클릭 한 번이 1,000배(1,000원)입니다.
 // 게이지 숫자를 바꾸면 firebase-rules.json 의 100 도 함께 고쳐 주세요.
 const FEVER_CLICKS = 100;
-const FEVER_MULT = 1000;
+const FEVER_MULT = 250;
 const FEVER_MS = 5000;
 const FLUSH_MS = 300; // 클릭을 모아서 서버로 보내는 간격
 
