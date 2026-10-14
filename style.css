@@ -275,3 +275,78 @@ button:focus-visible {
 @media (max-width: 520px) {
   .sync { margin-left: 18px; margin-right: 18px; }
 }
+
+/* 피버타임 */
+.fever {
+  padding: 16px 28px 14px;
+  background: #fff6e5;
+  border-bottom: 1.5px solid #f3dcae;
+}
+
+.fever-top {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+
+.fever-title {
+  font-family: inherit;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--saffron-deep);
+}
+
+.fever-text {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.fever-bar {
+  height: 14px;
+  border-radius: 8px;
+  background: #f3e3c3;
+  overflow: hidden;
+}
+
+.fever-fill {
+  height: 100%;
+  width: 0;
+  border-radius: 8px;
+  background: var(--saffron);
+  transition: width 0.12s linear;
+}
+
+.fever-on .fever {
+  background: var(--ink);
+  border-bottom-color: var(--saffron);
+}
+
+.fever-on .fever-title { color: var(--saffron); }
+.fever-on .fever-text { color: #fff; font-weight: 700; }
+.fever-on .fever-bar { background: #2e3a78; }
+.fever-on .fever-fill { background: linear-gradient(90deg, #ff7a18, #ffd04a); }
+
+.fever-on .earn {
+  background: #ff7a18;
+  color: #fff;
+  animation: fever-pulse 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes fever-pulse {
+  from { box-shadow: 0 0 0 0 rgba(255, 122, 24, 0.55); }
+  to { box-shadow: 0 0 0 10px rgba(255, 122, 24, 0); }
+}
+
+@media (max-width: 520px) {
+  .fever { padding-left: 18px; padding-right: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fever-fill { transition: none; }
+  .fever-on .earn { animation: none; }
+}
