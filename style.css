@@ -1,0 +1,277 @@
+:root {
+  --ink: #1b2559;
+  --ink-soft: #4a5485;
+  --saffron: #f0a030;
+  --saffron-deep: #c97a06;
+  --sky: #e6eef8;
+  --paper: #ffffff;
+  --line: #c9d3e6;
+  --radius: 18px;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--sky);
+  color: var(--ink);
+  font-family: "Noto Sans KR", system-ui, sans-serif;
+  line-height: 1.6;
+}
+
+.ticket {
+  width: 100%;
+  max-width: 680px;
+  background: var(--paper);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 32px rgba(27, 37, 89, 0.14);
+  overflow: hidden;
+}
+
+.ticket-head {
+  background: var(--ink);
+  color: #fff;
+  padding: 28px 28px 24px;
+  border-bottom: 6px solid var(--saffron);
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-family: "Black Han Sans", "Noto Sans KR", sans-serif;
+  font-weight: 400;
+  font-size: clamp(2rem, 7vw, 2.8rem);
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.lead {
+  margin: 0;
+  color: #cfd7f2;
+  font-size: 0.98rem;
+  max-width: 34em;
+}
+
+/* 비행 경로 */
+.route {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 32px 28px 8px;
+}
+
+.route-end {
+  display: flex;
+  flex-direction: column;
+  min-width: 64px;
+}
+
+.end-right { text-align: right; }
+
+.code {
+  font-family: "Black Han Sans", sans-serif;
+  font-size: 1.9rem;
+  line-height: 1;
+}
+
+.city {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.track {
+  position: relative;
+  flex: 1;
+  height: 28px;
+}
+
+.track::before {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  border-top: 3px dashed var(--line);
+  transform: translateY(-50%);
+}
+
+.track-done {
+  position: absolute;
+  left: 0; top: 50%;
+  height: 3px;
+  width: 0;
+  background: var(--saffron);
+  transform: translateY(-50%);
+  border-radius: 2px;
+  transition: width 0.25s ease-out;
+}
+
+.plane {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 34px;
+  height: 34px;
+  fill: var(--ink);
+  transform: translate(0, -50%);
+  transition: left 0.25s ease-out;
+  filter: drop-shadow(0 2px 0 var(--paper));
+}
+
+/* 금액 */
+.figures {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  padding: 24px 28px 0;
+}
+
+.figure {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+}
+
+.label {
+  font-size: 0.8rem;
+  color: var(--ink-soft);
+}
+
+.value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.value.strong {
+  color: var(--saffron-deep);
+}
+
+.percent {
+  margin: 14px 28px 0;
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+/* 버튼 */
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 20px 28px 0;
+}
+
+.btn {
+  flex: 1 1 220px;
+  border: 0;
+  border-radius: 14px;
+  padding: 18px 20px;
+  font: inherit;
+  font-size: 1.15rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  transition: transform 0.08s ease, background-color 0.15s ease;
+}
+
+.btn:active:not(:disabled) { transform: scale(0.97); }
+
+.earn {
+  background: var(--saffron);
+  color: var(--ink);
+  font-size: 1.4rem;
+  padding: 22px 20px;
+}
+
+.earn:hover { background: #f5ae48; }
+
+.donate {
+  background: var(--ink);
+  color: #fff;
+}
+
+.donate:hover:not(:disabled) { background: #28357a; }
+
+.donate:disabled {
+  background: #d9dfee;
+  color: #8790b0;
+  cursor: not-allowed;
+}
+
+button:focus-visible {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+}
+
+.status {
+  min-height: 1.6em;
+  margin: 14px 28px 0;
+  font-weight: 700;
+  color: var(--saffron-deep);
+}
+
+/* 하단 */
+.ticket-foot {
+  margin-top: 20px;
+  padding: 20px 28px 24px;
+  border-top: 2px dashed var(--line);
+  background: #f6f8fc;
+}
+
+.ticket-foot p { margin: 0 0 6px; }
+
+.note {
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+  max-width: 44em;
+}
+
+.reset {
+  margin-top: 10px;
+  padding: 8px 14px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.reset:hover { background: #fff; }
+
+/* 도착 */
+.arrived .plane { fill: var(--saffron-deep); }
+.arrived .percent { color: var(--saffron-deep); font-weight: 700; }
+
+@media (max-width: 520px) {
+  .ticket-head, .route, .figures, .actions, .ticket-foot { padding-left: 18px; padding-right: 18px; }
+  .percent, .status { margin-left: 18px; margin-right: 18px; }
+  .figures { grid-template-columns: 1fr; }
+  .figure { flex-direction: row; justify-content: space-between; align-items: baseline; }
+  .code { font-size: 1.5rem; }
+  .plane { width: 28px; height: 28px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track-done, .plane, .btn { transition: none; }
+}
+
+.sync {
+  margin: 4px 28px 0;
+  font-size: 0.82rem;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 520px) {
+  .sync { margin-left: 18px; margin-right: 18px; }
+}

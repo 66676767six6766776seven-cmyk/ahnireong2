@@ -1,0 +1,10 @@
+{
+  "rules": {
+    ".read": false,
+    "donated": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 387000 && (!data.exists() || newData.val() >= data.val())"
+    }
+  }
+}
