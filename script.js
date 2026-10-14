@@ -4,6 +4,11 @@ import { firebaseConfig } from "./firebase-config.js";
 // 항공권 가격이 바뀌면 아래 숫자와 firebase-rules.json 의 387000 을 함께 고쳐 주세요.
 const GOAL = 387000;
 
+// 피버타임: 100번 클릭하면 시작, 25초 동안 클릭 한 번이 1,000배(1,000원)
+const FEVER_CLICKS = 100;
+const FEVER_MULT = 1000;
+const FEVER_MS = 25000;
+
 const MY_KEY = "ahnireong-me";
 const LOCAL_SHARED_KEY = "ahnireong-shared-local";
 
@@ -24,14 +29,21 @@ const els = {
   plane: $("plane"),
   goalText: $("goalText"),
   ticket: document.querySelector(".ticket"),
+  feverText: $("feverText"),
+  feverFill: $("feverFill"),
 };
 
 // 내 지갑과 내가 기부한 돈은 이 브라우저에 저장하고,
 // 다 같이 모은 돈(shared)은 서버에서 가져옵니다.
-let me = { wallet: 0, mine: 0 };
+let me = { wallet: 0, mine: 0, fever: 0 };
 let shared = 0;
 let backend = null;
 let busy = false;
+
+// 피버타임 상태 (새로고침하면 진행 중인 피버타임은 사라집니다)
+let inFever = false;
+let feverEnd = 0;
+let feverTimer = null;
 
 const clamp = (n) => Math.max(0, Math.min(Number(n) || 0, GOAL));
 const won = (n) => n.toLocaleString("ko-KR");
@@ -45,6 +57,7 @@ function loadMe() {
       me = {
         wallet: Number.isFinite(wallet) && wallet > 0 ? Math.floor(wallet) : 0,
         mine: clamp(saved.mine),
+        fever: Math.min(Math.max(Math.floor(Number(saved.fever)) || 0, 0), FEVER_CLICKS - 1),
       };
     }
   } catch (e) { /* 저장소를 쓸 수 없으면 새로 시작 */ }
@@ -146,11 +159,57 @@ async function initBackend() {
 
 /* ---------- 버튼 ---------- */
 
+function renderFever() {
+  els.ticket.classList.toggle("fever-on", inFever);
+
+  if (inFever) {
+    const left = Math.max(feverEnd - Date.now(), 0);
+    els.feverFill.style.width = (left / FEVER_MS) * 100 + "%";
+    els.feverText.textContent =
+      `피버타임! 클릭 ×${won(FEVER_MULT)}배 (남은 시간 ${(left / 1000).toFixed(1)}초)`;
+    els.earnBtn.textContent = `${won(FEVER_MULT)}원 벌기`;
+  } else {
+    els.feverFill.style.width = (me.fever / FEVER_CLICKS) * 100 + "%";
+    els.feverText.textContent =
+      `${me.fever} / ${FEVER_CLICKS}번 클릭하면 피버타임이 시작돼요`;
+    els.earnBtn.textContent = "1원 벌기";
+  }
+}
+
+function startFever() {
+  inFever = true;
+  feverEnd = Date.now() + FEVER_MS;
+  me.fever = 0;
+  clearInterval(feverTimer);
+  feverTimer = setInterval(() => {
+    if (Date.now() >= feverEnd) {
+      endFever();
+    } else {
+      renderFever();
+    }
+  }, 100);
+}
+
+function endFever() {
+  inFever = false;
+  clearInterval(feverTimer);
+  feverTimer = null;
+  els.status.textContent = "피버타임이 끝났어요. 다시 100번을 채워 보세요!";
+  renderFever();
+}
+
 function earn() {
-  me.wallet += 1;
-  els.status.textContent = "";
+  if (inFever) {
+    me.wallet += 1 * FEVER_MULT;
+  } else {
+    me.wallet += 1;
+    me.fever += 1;
+    els.status.textContent = "";
+    if (me.fever >= FEVER_CLICKS) startFever();
+  }
   saveMe();
   render();
+  renderFever();
 }
 
 async function donate() {
@@ -186,10 +245,12 @@ function resetMine() {
     "내 지갑과 내 기부 기록만 지워져요. 다 같이 모은 돈은 그대로 남아요. 계속할까요?"
   );
   if (!ok) return;
-  me = { wallet: 0, mine: 0 };
+  me = { wallet: 0, mine: 0, fever: 0 };
+  if (inFever) endFever();
   els.status.textContent = "";
   saveMe();
   render();
+  renderFever();
 }
 
 els.earnBtn.addEventListener("click", earn);
@@ -198,4 +259,5 @@ els.resetBtn.addEventListener("click", resetMine);
 
 loadMe();
 render();
+renderFever();
 initBackend();
