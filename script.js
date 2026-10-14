@@ -50,6 +50,7 @@ let pending = 0;                    // 아직 서버로 보내지 않은 내 클
 let flushing = false;
 let flushTimer = null;
 let wasInFever = false;
+let feverFailed = false;            // 피버타임 정보를 서버에서 읽거나 쓰지 못하면 true
 
 const clamp = (n) => Math.max(0, Math.min(Number(n) || 0, GOAL));
 const clampCount = (n) => Math.max(0, Math.min(Math.floor(Number(n)) || 0, FEVER_CLICKS));
@@ -141,8 +142,9 @@ function renderFever() {
   } else {
     const shown = Math.min(fever.count + pending, FEVER_CLICKS);
     els.feverFill.style.width = (shown / FEVER_CLICKS) * 100 + "%";
-    els.feverText.textContent =
-      `${shown} / ${FEVER_CLICKS}번 (모두의 클릭이 함께 채워요)`;
+    els.feverText.textContent = feverFailed
+      ? `${shown} / ${FEVER_CLICKS}번 (서버에 저장되지 않고 있어요. Firebase 규칙을 확인해 주세요)`
+      : `${shown} / ${FEVER_CLICKS}번 (모두의 클릭이 함께 채워요)`;
     els.earnBtn.textContent = "1원 벌기";
   }
 }
@@ -164,7 +166,10 @@ async function flush() {
   let ok = true;
   try {
     await backend.addClicks(n);
+    feverFailed = false;
   } catch (e) {
+    console.error("피버타임 저장 실패:", e);
+    feverFailed = true;
     pending = Math.min(pending + n, FEVER_CLICKS);
     ok = false;
   }
@@ -238,9 +243,14 @@ async function initBackend() {
       (snap) => {
         const v = snap.val() || {};
         fever = { count: clampCount(v.count), endAt: Number(v.endAt) || 0 };
+        feverFailed = false;
         renderFever();
       },
-      () => setSync(failMsg)
+      (err) => {
+        console.error("피버타임 읽기 실패:", err);
+        feverFailed = true;
+        renderFever();
+      }
     );
 
     backend = {
