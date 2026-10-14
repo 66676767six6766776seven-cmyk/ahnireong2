@@ -4,13 +4,17 @@ import { firebaseConfig } from "./firebase-config.js";
 // 항공권 가격이 바뀌면 아래 숫자와 firebase-rules.json 의 387000 을 함께 고쳐 주세요.
 const GOAL = 387000;
 
-// 피버타임: 100번 클릭하면 시작, 25초 동안 클릭 한 번이 1,000배(1,000원)
+// 피버타임: 접속한 모든 사람의 클릭이 하나의 게이지를 채웁니다.
+// 100번이 모이면 모두에게 동시에 시작되고, 25초 동안 클릭 한 번이 1,000배(1,000원)입니다.
+// 게이지 숫자를 바꾸면 firebase-rules.json 의 100 도 함께 고쳐 주세요.
 const FEVER_CLICKS = 100;
 const FEVER_MULT = 1000;
 const FEVER_MS = 25000;
+const FLUSH_MS = 300; // 클릭을 모아서 서버로 보내는 간격
 
 const MY_KEY = "ahnireong-me";
 const LOCAL_SHARED_KEY = "ahnireong-shared-local";
+const LOCAL_FEVER_KEY = "ahnireong-fever-local";
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -34,19 +38,24 @@ const els = {
 };
 
 // 내 지갑과 내가 기부한 돈은 이 브라우저에 저장하고,
-// 다 같이 모은 돈(shared)은 서버에서 가져옵니다.
-let me = { wallet: 0, mine: 0, fever: 0 };
+// 다 같이 모은 돈(shared)과 피버타임(fever)은 서버에서 가져옵니다.
+let me = { wallet: 0, mine: 0 };
 let shared = 0;
 let backend = null;
 let busy = false;
 
-// 피버타임 상태 (새로고침하면 진행 중인 피버타임은 사라집니다)
-let inFever = false;
-let feverEnd = 0;
-let feverTimer = null;
+let fever = { count: 0, endAt: 0 }; // 서버의 피버타임 상태 (endAt: 끝나는 시각, ms)
+let serverOffset = 0;               // 내 시계와 서버 시계의 차이
+let pending = 0;                    // 아직 서버로 보내지 않은 내 클릭 수
+let flushing = false;
+let flushTimer = null;
+let wasInFever = false;
 
 const clamp = (n) => Math.max(0, Math.min(Number(n) || 0, GOAL));
+const clampCount = (n) => Math.max(0, Math.min(Math.floor(Number(n)) || 0, FEVER_CLICKS));
 const won = (n) => n.toLocaleString("ko-KR");
+const serverNow = () => Date.now() + serverOffset;
+const isFever = () => serverNow() < fever.endAt;
 
 function loadMe() {
   try {
@@ -57,7 +66,6 @@ function loadMe() {
       me = {
         wallet: Number.isFinite(wallet) && wallet > 0 ? Math.floor(wallet) : 0,
         mine: clamp(saved.mine),
-        fever: Math.min(Math.max(Math.floor(Number(saved.fever)) || 0, 0), FEVER_CLICKS - 1),
       };
     }
   } catch (e) { /* 저장소를 쓸 수 없으면 새로 시작 */ }
@@ -96,10 +104,83 @@ function render() {
   }
 }
 
+/* ---------- 피버타임 ---------- */
+
+// 클릭 n번을 반영한 새 피버타임 상태를 계산합니다. (서버 트랜잭션과 연습 모드가 함께 씁니다.)
+function applyClicks(cur, n, now) {
+  const count = clampCount(cur && cur.count);
+  const endAt = Number(cur && cur.endAt) || 0;
+  if (endAt > now) return { count, endAt };          // 피버타임 중에는 게이지가 오르지 않음
+  const next = count + n;
+  if (next >= FEVER_CLICKS) return { count: 0, endAt: now + FEVER_MS };
+  return { count: next, endAt };
+}
+
+function renderFever() {
+  const now = serverNow();
+  const active = now < fever.endAt;
+
+  if (active !== wasInFever) {
+    wasInFever = active;
+    if (active) {
+      pending = 0;
+      els.status.textContent = `피버타임 시작! 25초 동안 모두의 클릭이 ${won(FEVER_MULT)}배예요.`;
+    } else {
+      els.status.textContent = `피버타임이 끝났어요. 다시 ${FEVER_CLICKS}번을 모두 함께 채워 보세요!`;
+    }
+  }
+
+  els.ticket.classList.toggle("fever-on", active);
+
+  if (active) {
+    const left = Math.min(Math.max(fever.endAt - now, 0), FEVER_MS);
+    els.feverFill.style.width = (left / FEVER_MS) * 100 + "%";
+    els.feverText.textContent =
+      `피버타임! 클릭 ×${won(FEVER_MULT)}배 (남은 시간 ${(left / 1000).toFixed(1)}초)`;
+    els.earnBtn.textContent = `${won(FEVER_MULT)}원 벌기`;
+  } else {
+    const shown = Math.min(fever.count + pending, FEVER_CLICKS);
+    els.feverFill.style.width = (shown / FEVER_CLICKS) * 100 + "%";
+    els.feverText.textContent =
+      `${shown} / ${FEVER_CLICKS}번 (모두의 클릭이 함께 채워요)`;
+    els.earnBtn.textContent = "1원 벌기";
+  }
+}
+
+function scheduleFlush(delay = FLUSH_MS) {
+  if (flushTimer) return;
+  flushTimer = setTimeout(flush, delay);
+}
+
+// 모아 둔 클릭을 서버로 한꺼번에 보냅니다.
+async function flush() {
+  flushTimer = null;
+  if (flushing || pending === 0) return;
+  if (!backend) { scheduleFlush(500); return; }
+
+  flushing = true;
+  const n = pending;
+  pending = 0;
+  let ok = true;
+  try {
+    await backend.addClicks(n);
+  } catch (e) {
+    pending = Math.min(pending + n, FEVER_CLICKS);
+    ok = false;
+  }
+  flushing = false;
+  if (pending > 0) scheduleFlush(ok ? FLUSH_MS : 2000);
+}
+
 /* ---------- 저장소(백엔드) ---------- */
 
 function setupLocalBackend(message) {
   try { shared = clamp(localStorage.getItem(LOCAL_SHARED_KEY)); } catch (e) { shared = 0; }
+  try {
+    const f = JSON.parse(localStorage.getItem(LOCAL_FEVER_KEY));
+    if (f) fever = { count: clampCount(f.count), endAt: Number(f.endAt) || 0 };
+  } catch (e) { /* 무시 */ }
+
   backend = {
     async add(amount) {
       const next = Math.min(shared + amount, GOAL);
@@ -108,9 +189,15 @@ function setupLocalBackend(message) {
       try { localStorage.setItem(LOCAL_SHARED_KEY, String(shared)); } catch (e) { /* 무시 */ }
       return added;
     },
+    async addClicks(n) {
+      fever = applyClicks(fever, n, Date.now());
+      try { localStorage.setItem(LOCAL_FEVER_KEY, JSON.stringify(fever)); } catch (e) { /* 무시 */ }
+      renderFever();
+    },
   };
   setSync(message);
   render();
+  renderFever();
 }
 
 async function initBackend() {
@@ -128,6 +215,13 @@ async function initBackend() {
     const app = appMod.initializeApp(firebaseConfig);
     const db = dbMod.getDatabase(app);
     const donatedRef = dbMod.ref(db, "donated");
+    const feverRef = dbMod.ref(db, "fever");
+    const failMsg = "공유 서버에 연결하지 못했어요. Firebase 설정과 규칙을 확인해 주세요.";
+
+    // 내 시계와 서버 시계의 차이 (모두가 같은 시각에 피버타임이 끝나도록)
+    dbMod.onValue(dbMod.ref(db, ".info/serverTimeOffset"), (snap) => {
+      serverOffset = Number(snap.val()) || 0;
+    });
 
     dbMod.onValue(
       donatedRef,
@@ -136,7 +230,17 @@ async function initBackend() {
         setSync("실시간으로 모든 방문자와 함께 모으는 중이에요.");
         render();
       },
-      () => setSync("공유 서버에 연결하지 못했어요. Firebase 설정과 규칙을 확인해 주세요.")
+      () => setSync(failMsg)
+    );
+
+    dbMod.onValue(
+      feverRef,
+      (snap) => {
+        const v = snap.val() || {};
+        fever = { count: clampCount(v.count), endAt: Number(v.endAt) || 0 };
+        renderFever();
+      },
+      () => setSync(failMsg)
     );
 
     backend = {
@@ -151,6 +255,10 @@ async function initBackend() {
         });
         return added;
       },
+      // 피버타임 게이지에 클릭 n번을 더합니다.
+      async addClicks(n) {
+        await dbMod.runTransaction(feverRef, (cur) => applyClicks(cur, n, serverNow()));
+      },
     };
   } catch (e) {
     setSync("공유 서버를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.");
@@ -159,53 +267,21 @@ async function initBackend() {
 
 /* ---------- 버튼 ---------- */
 
-function renderFever() {
-  els.ticket.classList.toggle("fever-on", inFever);
-
-  if (inFever) {
-    const left = Math.max(feverEnd - Date.now(), 0);
-    els.feverFill.style.width = (left / FEVER_MS) * 100 + "%";
-    els.feverText.textContent =
-      `피버타임! 클릭 ×${won(FEVER_MULT)}배 (남은 시간 ${(left / 1000).toFixed(1)}초)`;
-    els.earnBtn.textContent = `${won(FEVER_MULT)}원 벌기`;
-  } else {
-    els.feverFill.style.width = (me.fever / FEVER_CLICKS) * 100 + "%";
-    els.feverText.textContent =
-      `${me.fever} / ${FEVER_CLICKS}번 클릭하면 피버타임이 시작돼요`;
-    els.earnBtn.textContent = "1원 벌기";
-  }
-}
-
-function startFever() {
-  inFever = true;
-  feverEnd = Date.now() + FEVER_MS;
-  me.fever = 0;
-  clearInterval(feverTimer);
-  feverTimer = setInterval(() => {
-    if (Date.now() >= feverEnd) {
-      endFever();
-    } else {
-      renderFever();
-    }
-  }, 100);
-}
-
-function endFever() {
-  inFever = false;
-  clearInterval(feverTimer);
-  feverTimer = null;
-  els.status.textContent = "피버타임이 끝났어요. 다시 100번을 채워 보세요!";
-  renderFever();
-}
-
 function earn() {
-  if (inFever) {
+  if (isFever()) {
     me.wallet += 1 * FEVER_MULT;
   } else {
     me.wallet += 1;
-    me.fever += 1;
     els.status.textContent = "";
-    if (me.fever >= FEVER_CLICKS) startFever();
+    pending = Math.min(pending + 1, FEVER_CLICKS);
+    if (fever.count + pending >= FEVER_CLICKS) {
+      // 게이지가 찰 차례라면 기다리지 않고 바로 서버에 알립니다.
+      clearTimeout(flushTimer);
+      flushTimer = null;
+      flush();
+    } else {
+      scheduleFlush();
+    }
   }
   saveMe();
   render();
@@ -245,12 +321,10 @@ function resetMine() {
     "내 지갑과 내 기부 기록만 지워져요. 다 같이 모은 돈은 그대로 남아요. 계속할까요?"
   );
   if (!ok) return;
-  me = { wallet: 0, mine: 0, fever: 0 };
-  if (inFever) endFever();
+  me = { wallet: 0, mine: 0 };
   els.status.textContent = "";
   saveMe();
   render();
-  renderFever();
 }
 
 els.earnBtn.addEventListener("click", earn);
@@ -260,4 +334,5 @@ els.resetBtn.addEventListener("click", resetMine);
 loadMe();
 render();
 renderFever();
+setInterval(renderFever, 100);
 initBackend();
