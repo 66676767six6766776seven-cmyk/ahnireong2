@@ -17,10 +17,18 @@
       <p class="lead">버튼을 눌러 1원씩 모으고 안이령에게 기부하세요. 접속한 모든 사람의 기부가 한 곳에 합쳐집니다. 목표는 뉴델리행 편도 항공권입니다.</p>
     </header>
 
+    <section class="fever" id="fever" aria-label="피버타임">
+      <div class="fever-top">
+        <span class="fever-title">피버타임</span>
+        <span class="fever-text" id="feverText">0 / 100번 클릭하면 피버타임이 시작돼요</span>
+      </div>
+      <div class="fever-bar"><div class="fever-fill" id="feverFill"></div></div>
+    </section>
+
     <section class="route" aria-label="모금 진행 상황">
       <div class="route-end">
-        <span class="code">ICN</span>
-        <span class="city">서울 인천</span>
+        <span class="code">홍성</span>
+        <span class="city">충남</span>
       </div>
       <div class="track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="track">
         <div class="track-done" id="trackDone"></div>
@@ -62,7 +70,7 @@
     <footer class="ticket-foot">
       <div class="stub">
         <p>목표 금액 <strong id="goalText">387,000</strong>원</p>
-        <p class="note">2026년 10월 14일 기준, 인천에서 뉴델리까지 가는 중급 항공사(에어인디아 직항) 편도 요금을 약 387,000원으로 잡았어요. 항공권 가격은 날마다 바뀌므로 정확한 요금이 아닙니다.</p>
+        <p class="note">2026년 10월 14일 기준, 인천에서 뉴델리까지 가는 중급 항공사(에어인디아 직항) 편도 요금을 약 387,000원으로 잡았어요. 출발지는 충남 홍성으로 했지만 홍성에는 공항이 없어서 요금은 인천공항 출발 기준 그대로 썼습니다. 항공권 가격은 날마다 바뀌므로 정확한 요금이 아닙니다.</p>
         <p class="note">이 사이트의 돈은 모두 가상의 돈이며 실제 결제나 송금은 일어나지 않습니다.</p>
       </div>
       <button type="button" class="reset" id="resetBtn">내 기록 지우기</button>
