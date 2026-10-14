@@ -1,19 +1,39 @@
 import { firebaseConfig } from "./firebase-config.js";
 
 // 목표 금액: 2026-10-14 기준 인천 → 뉴델리 편도(에어인디아 직항, 중급 항공사) 약 387,000원
-// 항공권 가격이 바뀌면 아래 숫자와 firebase-rules.json 의 387000 을 함께 고쳐 주세요.
 const GOAL = 387000;
 
 // 피버타임: 접속한 모든 사람의 클릭이 하나의 게이지를 채웁니다.
 // 100번이 모이면 모두에게 동시에 시작되고, 25초 동안 클릭 한 번이 1,000배(1,000원)입니다.
 // 게이지 숫자를 바꾸면 firebase-rules.json 의 100 도 함께 고쳐 주세요.
 const FEVER_CLICKS = 100;
-const FEVER_MULT = 250;
-const FEVER_MS = 5000;
+const FEVER_MULT = 1000;
+const FEVER_MS = 25000;
 const FLUSH_MS = 300; // 클릭을 모아서 서버로 보내는 간격
 
+// 모금을 다 채운 뒤의 여행 (밀리초). 모든 방문자 화면에서 같은 순간에 같은 장면이 나옵니다.
+const JOURNEY = {
+  go: 8000,    // 홍성 → 뉴델리 (사진 1)
+  stay: 4000,  // 뉴델리 도착 (사진 2)
+  back: 8000,  // 뉴델리 → 홍성 (사진 2)
+  home: 3000,  // 홍성 도착 (사진 1로 돌아옴) → 새 모금 시작
+};
+const JOURNEY_TOTAL = JOURNEY.go + JOURNEY.stay + JOURNEY.back + JOURNEY.home;
+const PHOTO1 = "photo1.jpg";
+const PHOTO2 = "photo2.jpg";
+
+const MESSAGES = {
+  funding: "",
+  boarding: "목표 달성! 안이령이 비행기에 탑승했어요. 곧 출발합니다!",
+  going: "안이령이 인도 뉴델리로 날아가는 중이에요…",
+  arrived: "안이령이 무사히 인도로 도착했습니다",
+  returning: "안이령이 충남 홍성으로 돌아가는 중이에요…",
+  home: "안이령이 홍성에 무사히 돌아왔어요! 곧 새 모금이 시작돼요.",
+  done: "안이령이 홍성에 무사히 돌아왔어요! 곧 새 모금이 시작돼요.",
+};
+
 const MY_KEY = "ahnireong-me";
-const LOCAL_SHARED_KEY = "ahnireong-shared-local";
+const LOCAL_KEY = "ahnireong-local-v2";
 const LOCAL_FEVER_KEY = "ahnireong-fever-local";
 
 const $ = (id) => document.getElementById(id);
@@ -30,45 +50,52 @@ const els = {
   sync: $("sync"),
   track: $("track"),
   trackDone: $("trackDone"),
-  plane: $("plane"),
+  craft: $("craft"),
+  rider: $("rider"),
+  journeyMsg: $("journeyMsg"),
   goalText: $("goalText"),
   ticket: document.querySelector(".ticket"),
   feverText: $("feverText"),
   feverFill: $("feverFill"),
 };
 
+const reduceMotion =
+  window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 // 내 지갑과 내가 기부한 돈은 이 브라우저에 저장하고,
-// 다 같이 모은 돈(shared)과 피버타임(fever)은 서버에서 가져옵니다.
+// 모금액·여행·피버타임은 서버에서 가져옵니다.
 let me = { wallet: 0, mine: 0 };
-let shared = 0;
 let backend = null;
 let busy = false;
 
-let fever = { count: 0, endAt: 0 }; // 서버의 피버타임 상태 (endAt: 끝나는 시각, ms)
-let serverOffset = 0;               // 내 시계와 서버 시계의 차이
-let pending = 0;                    // 아직 서버로 보내지 않은 내 클릭 수
+// 모금액은 "누적 합계"로 저장합니다. 한 바퀴(round)마다 GOAL 만큼씩 늘어나고, 줄어드는 일이 없습니다.
+let donatedTotal = 0;
+let round = 0;
+let trip = null; // { round, startAt } : 이번 바퀴의 여행이 시작된 시각
+let tripStarting = false;
+let advancing = false;
+
+let fever = { count: 0, endAt: 0 };
+let serverOffset = 0;
+let pending = 0;
 let flushing = false;
 let flushTimer = null;
 let wasInFever = false;
-let feverFailed = false;            // 피버타임 정보를 서버에서 읽거나 쓰지 못하면 true
+let feverFailed = false;
 
-const clamp = (n) => Math.max(0, Math.min(Number(n) || 0, GOAL));
 const clampCount = (n) => Math.max(0, Math.min(Math.floor(Number(n)) || 0, FEVER_CLICKS));
+const nonNeg = (n) => Math.max(0, Math.floor(Number(n)) || 0);
 const won = (n) => n.toLocaleString("ko-KR");
 const serverNow = () => Date.now() + serverOffset;
 const isFever = () => serverNow() < fever.endAt;
 
+// 이번 바퀴에서 모인 돈 (0 ~ GOAL)
+const getShared = () => Math.max(0, Math.min(donatedTotal - round * GOAL, GOAL));
+
 function loadMe() {
   try {
     const saved = JSON.parse(localStorage.getItem(MY_KEY));
-    if (saved) {
-      // 지갑은 목표보다 클 수 있으므로 clamp를 쓰지 않습니다.
-      const wallet = Number(saved.wallet);
-      me = {
-        wallet: Number.isFinite(wallet) && wallet > 0 ? Math.floor(wallet) : 0,
-        mine: clamp(saved.mine),
-      };
-    }
+    if (saved) me = { wallet: nonNeg(saved.wallet), mine: nonNeg(saved.mine) };
   } catch (e) { /* 저장소를 쓸 수 없으면 새로 시작 */ }
 }
 
@@ -81,8 +108,8 @@ function setSync(text) {
 }
 
 function render() {
-  const ratio = Math.min(shared / GOAL, 1);
-  const pct = ratio * 100;
+  const shared = getShared();
+  const pct = (shared / GOAL) * 100;
   const remaining = Math.max(GOAL - shared, 0);
 
   els.wallet.textContent = won(me.wallet);
@@ -93,16 +120,78 @@ function render() {
   els.goalText.textContent = won(GOAL);
 
   els.trackDone.style.width = pct + "%";
-  els.plane.style.left = `calc(${pct}% - ${pct * 0.34}px)`;
   els.track.setAttribute("aria-valuenow", pct.toFixed(2));
 
   els.donateBtn.disabled = busy || me.wallet === 0 || remaining === 0;
+  els.ticket.classList.toggle("arrived", remaining === 0);
+}
 
-  const done = remaining === 0;
-  els.ticket.classList.toggle("arrived", done);
-  if (done) {
-    els.status.textContent = "목표 달성! 모두의 도움으로 안이령이 뉴델리행 비행기에 탑승합니다.";
+/* ---------- 여행 (모금 완료 후) ---------- */
+
+const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+// 지금 어떤 장면인지 계산합니다. p: 0 = 홍성, 1 = 뉴델리
+function journeyState() {
+  if (!(trip && trip.round === round)) {
+    return getShared() >= GOAL ? { phase: "boarding", p: 0 } : { phase: "funding", p: 0 };
   }
+  const e = Math.max(serverNow() - trip.startAt, 0);
+  const J = JOURNEY;
+  if (e < J.go) return { phase: "going", p: ease(e / J.go) };
+  if (e < J.go + J.stay) return { phase: "arrived", p: 1 };
+  if (e < J.go + J.stay + J.back) {
+    return { phase: "returning", p: 1 - ease((e - J.go - J.stay) / J.back) };
+  }
+  if (e < JOURNEY_TOTAL) return { phase: "home", p: 0 };
+  return { phase: "done", p: 0 };
+}
+
+let currentPhoto = 0;
+function setPhoto(which) {
+  if (which === currentPhoto) return;
+  const first = currentPhoto === 0;
+  currentPhoto = which;
+  els.rider.src = which === 2 ? PHOTO2 : PHOTO1;
+  if (!first) {
+    els.rider.classList.remove("pop");
+    void els.rider.offsetWidth; // 애니메이션을 다시 재생하기 위한 트릭
+    els.rider.classList.add("pop");
+  }
+}
+
+let lastPhase = "";
+function renderJourney() {
+  const { phase, p } = journeyState();
+
+  els.craft.style.setProperty("--p", reduceMotion ? (p >= 0.5 ? 1 : 0) : p);
+  els.craft.classList.toggle("back", phase === "returning");
+  setPhoto(phase === "arrived" || phase === "returning" ? 2 : 1);
+
+  if (phase !== lastPhase) {
+    lastPhase = phase;
+    els.journeyMsg.textContent = MESSAGES[phase] || "";
+    els.journeyMsg.dataset.phase = phase;
+  }
+
+  // 여행 시작과 새 모금 시작은 누군가 한 명이 서버에 기록해 주면 모두에게 반영됩니다.
+  if (!backend) return;
+  if (phase === "boarding" && !tripStarting) {
+    tripStarting = true;
+    backend.startTrip(round).catch(() => {}).finally(() => {
+      setTimeout(() => { tripStarting = false; }, 1500);
+    });
+  }
+  if (phase === "done" && !advancing) {
+    advancing = true;
+    backend.nextRound(round).catch(() => {}).finally(() => {
+      setTimeout(() => { advancing = false; }, 1500);
+    });
+  }
+}
+
+function journeyLoop() {
+  renderJourney();
+  requestAnimationFrame(journeyLoop);
 }
 
 /* ---------- 피버타임 ---------- */
@@ -125,7 +214,7 @@ function renderFever() {
     wasInFever = active;
     if (active) {
       pending = 0;
-      els.status.textContent = `피버타임 시작! 25초 동안 모두의 클릭이 ${won(FEVER_MULT)}배예요.`;
+      els.status.textContent = `피버타임 시작! ${FEVER_MS / 1000}초 동안 모두의 클릭이 ${won(FEVER_MULT)}배예요.`;
     } else {
       els.status.textContent = `피버타임이 끝났어요. 다시 ${FEVER_CLICKS}번을 모두 함께 채워 보세요!`;
     }
@@ -180,19 +269,46 @@ async function flush() {
 /* ---------- 저장소(백엔드) ---------- */
 
 function setupLocalBackend(message) {
-  try { shared = clamp(localStorage.getItem(LOCAL_SHARED_KEY)); } catch (e) { shared = 0; }
+  try {
+    const s = JSON.parse(localStorage.getItem(LOCAL_KEY));
+    if (s) {
+      donatedTotal = nonNeg(s.donatedTotal);
+      round = nonNeg(s.round);
+      trip = s.trip && Number.isFinite(s.trip.startAt)
+        ? { round: nonNeg(s.trip.round), startAt: Number(s.trip.startAt) }
+        : null;
+    }
+  } catch (e) { /* 무시 */ }
   try {
     const f = JSON.parse(localStorage.getItem(LOCAL_FEVER_KEY));
     if (f) fever = { count: clampCount(f.count), endAt: Number(f.endAt) || 0 };
   } catch (e) { /* 무시 */ }
 
+  const saveLocal = () => {
+    try { localStorage.setItem(LOCAL_KEY, JSON.stringify({ donatedTotal, round, trip })); } catch (e) { /* 무시 */ }
+  };
+
   backend = {
     async add(amount) {
-      const next = Math.min(shared + amount, GOAL);
-      const added = next - shared;
-      shared = next;
-      try { localStorage.setItem(LOCAL_SHARED_KEY, String(shared)); } catch (e) { /* 무시 */ }
+      const cap = (round + 1) * GOAL;
+      const next = Math.max(donatedTotal, Math.min(donatedTotal + amount, cap));
+      const added = next - donatedTotal;
+      donatedTotal = next;
+      saveLocal();
       return added;
+    },
+    async startTrip(r) {
+      if (!(trip && trip.round === r)) {
+        trip = { round: r, startAt: Date.now() };
+        saveLocal();
+      }
+    },
+    async nextRound(r) {
+      if (round === r) {
+        round = r + 1;
+        saveLocal();
+        render();
+      }
     },
     async addClicks(n) {
       fever = applyClicks(fever, n, Date.now());
@@ -220,10 +336,12 @@ async function initBackend() {
     const app = appMod.initializeApp(firebaseConfig);
     const db = dbMod.getDatabase(app);
     const donatedRef = dbMod.ref(db, "donated");
+    const roundRef = dbMod.ref(db, "round");
+    const tripRef = dbMod.ref(db, "trip");
     const feverRef = dbMod.ref(db, "fever");
     const failMsg = "공유 서버에 연결하지 못했어요. Firebase 설정과 규칙을 확인해 주세요.";
 
-    // 내 시계와 서버 시계의 차이 (모두가 같은 시각에 피버타임이 끝나도록)
+    // 내 시계와 서버 시계의 차이 (모두가 같은 시각에 같은 장면을 보도록)
     dbMod.onValue(dbMod.ref(db, ".info/serverTimeOffset"), (snap) => {
       serverOffset = Number(snap.val()) || 0;
     });
@@ -231,9 +349,29 @@ async function initBackend() {
     dbMod.onValue(
       donatedRef,
       (snap) => {
-        shared = clamp(snap.val());
+        donatedTotal = nonNeg(snap.val());
         setSync("실시간으로 모든 방문자와 함께 모으는 중이에요.");
         render();
+      },
+      () => setSync(failMsg)
+    );
+
+    dbMod.onValue(
+      roundRef,
+      (snap) => {
+        round = nonNeg(snap.val());
+        render();
+      },
+      () => setSync(failMsg)
+    );
+
+    dbMod.onValue(
+      tripRef,
+      (snap) => {
+        const v = snap.val();
+        trip = v && Number.isFinite(Number(v.startAt))
+          ? { round: nonNeg(v.round), startAt: Number(v.startAt) }
+          : null;
       },
       () => setSync(failMsg)
     );
@@ -254,16 +392,30 @@ async function initBackend() {
     );
 
     backend = {
-      // 서버에 안전하게 더하고, 실제로 더해진 금액을 돌려줍니다.
+      // 이번 바퀴의 목표까지만 안전하게 더하고, 실제로 더해진 금액을 돌려줍니다.
       async add(amount) {
         let added = 0;
+        const cap = (round + 1) * GOAL;
         await dbMod.runTransaction(donatedRef, (current) => {
-          const cur = clamp(current);
-          const next = Math.min(cur + amount, GOAL);
+          const cur = nonNeg(current);
+          const next = Math.max(cur, Math.min(cur + amount, cap));
           added = next - cur;
           return next;
         });
         return added;
+      },
+      // 이번 바퀴의 여행을 시작합니다. 이미 시작됐다면 그대로 둡니다.
+      async startTrip(r) {
+        await dbMod.runTransaction(tripRef, (cur) =>
+          cur && Number(cur.round) === r ? cur : { round: r, startAt: serverNow() }
+        );
+      },
+      // 여행이 끝나면 다음 바퀴로 넘어가 모금액이 0에서 다시 시작됩니다.
+      async nextRound(r) {
+        await dbMod.runTransaction(roundRef, (cur) => {
+          const c = nonNeg(cur);
+          return c === r ? r + 1 : c;
+        });
       },
       // 피버타임 게이지에 클릭 n번을 더합니다.
       async addClicks(n) {
@@ -317,7 +469,7 @@ async function donate() {
     els.status.textContent =
       added > 0
         ? `${won(added)}원을 안이령에게 기부했어요. 고마워요!`
-        : "이미 목표 금액이 모두 모였어요.";
+        : "이번 모금은 이미 목표 금액이 모두 모였어요.";
   } catch (e) {
     els.status.textContent = "기부하지 못했어요. 지갑의 돈은 그대로예요. 잠시 후 다시 시도해 주세요.";
   } finally {
@@ -341,8 +493,13 @@ els.earnBtn.addEventListener("click", earn);
 els.donateBtn.addEventListener("click", donate);
 els.resetBtn.addEventListener("click", resetMine);
 
+// 사진 2를 미리 내려받아 두어 바뀔 때 깜빡이지 않게 합니다.
+new Image().src = PHOTO2;
+
 loadMe();
 render();
 renderFever();
+renderJourney();
+requestAnimationFrame(journeyLoop);
 setInterval(renderFever, 100);
 initBackend();
