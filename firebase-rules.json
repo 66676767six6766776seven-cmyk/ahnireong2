@@ -5,6 +5,20 @@
       ".read": true,
       ".write": true,
       ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 387000 && (!data.exists() || newData.val() >= data.val())"
+    },
+    "fever": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.hasChildren(['count', 'endAt'])",
+      "count": {
+        ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
+      },
+      "endAt": {
+        ".validate": "newData.isNumber() && newData.val() >= 0"
+      },
+      "$other": {
+        ".validate": false
+      }
     }
   }
 }
