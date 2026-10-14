@@ -4,7 +4,26 @@
     "donated": {
       ".read": true,
       ".write": true,
-      ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 387000 && (!data.exists() || newData.val() >= data.val())"
+      ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 387000000000 && (!data.exists() || newData.val() >= data.val())"
+    },
+    "round": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000 && (!data.exists() || newData.val() >= data.val())"
+    },
+    "trip": {
+      ".read": true,
+      ".write": true,
+      ".validate": "newData.hasChildren(['round', 'startAt'])",
+      "round": {
+        ".validate": "newData.isNumber() && newData.val() >= 0"
+      },
+      "startAt": {
+        ".validate": "newData.isNumber() && newData.val() >= 0"
+      },
+      "$other": {
+        ".validate": false
+      }
     },
     "fever": {
       ".read": true,
