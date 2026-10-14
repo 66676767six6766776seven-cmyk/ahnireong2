@@ -9,7 +9,7 @@ const GOAL = 387000;
 // 게이지 숫자를 바꾸면 firebase-rules.json 의 100 도 함께 고쳐 주세요.
 const FEVER_CLICKS = 100;
 const FEVER_MULT = 1000;
-const FEVER_MS = 25000;
+const FEVER_MS = 5000;
 const FLUSH_MS = 300; // 클릭을 모아서 서버로 보내는 간격
 
 const MY_KEY = "ahnireong-me";
