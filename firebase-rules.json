@@ -1,20 +1,41 @@
 {
   "rules": {
     ".read": false,
-    "donated": {
+    "v2": {
       ".read": true,
       ".write": true,
-      ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 387000 && (!data.exists() || newData.val() >= data.val())"
-    },
-    "fever": {
-      ".read": true,
-      ".write": true,
-      ".validate": "newData.hasChildren(['count', 'endAt'])",
-      "count": {
-        ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100"
+      "donatedKrw": {
+        ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 387000000000 && (!data.exists() || newData.val() >= data.val())"
       },
-      "endAt": {
-        ".validate": "newData.isNumber() && newData.val() >= 0"
+      "donatedInr": {
+        ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 52400000000 && (!data.exists() || newData.val() >= data.val())"
+      },
+      "leg": {
+        ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000 && (!data.exists() || newData.val() >= data.val())"
+      },
+      "trip": {
+        ".validate": "newData.hasChildren(['leg', 'startAt'])",
+        "leg": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "startAt": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "$other": {
+          ".validate": false
+        }
+      },
+      "fever": {
+        ".validate": "newData.hasChildren(['count', 'endAt'])",
+        "count": {
+          ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 300"
+        },
+        "endAt": {
+          ".validate": "newData.isNumber() && newData.val() >= 0"
+        },
+        "$other": {
+          ".validate": false
+        }
       },
       "$other": {
         ".validate": false
