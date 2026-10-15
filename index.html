@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>안이령에게 모금해주세요</title>
-  <meta name="description" content="다 같이 1원씩 모아 안이령을 인도 뉴델리로 보내 주세요. 모든 돈은 가상입니다.">
+  <meta name="description" content="다 같이 돈을 모아 안이령을 인도 뉴델리로 보내고, 다시 한국으로 데려와 주세요. 모든 돈은 가상입니다.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
@@ -13,14 +13,17 @@
 <body>
   <main class="ticket">
     <header class="ticket-head">
-      <h1>안이령에게 모금해주세요</h1>
-      <p class="lead">버튼을 눌러 1원씩 모으고 안이령에게 기부하세요. 접속한 모든 사람의 기부가 한 곳에 합쳐집니다. 목표는 뉴델리행 편도 항공권입니다.</p>
+      <div class="head-row">
+        <h1>안이령에게 모금해주세요</h1>
+        <button type="button" class="map-btn" id="mapBtn">지도</button>
+      </div>
+      <p class="lead">버튼을 눌러 돈을 모으고 안이령에게 기부하세요. 한국에서는 원으로 인도행 비행기 값을, 인도에서는 루피로 한국행 비행기 값을 모읍니다. 접속한 모든 사람의 기부가 한 곳에 합쳐집니다.</p>
     </header>
 
     <section class="fever" id="fever" aria-label="피버타임">
       <div class="fever-top">
         <span class="fever-title">피버타임</span>
-        <span class="fever-text" id="feverText">0 / 100번 (모두의 클릭이 함께 채워요)</span>
+        <span class="fever-text" id="feverText">0 / 300번 (모두의 클릭이 함께 채워요)</span>
       </div>
       <div class="fever-bar"><div class="fever-fill" id="feverFill"></div></div>
     </section>
@@ -50,37 +53,81 @@
     <section class="figures" aria-live="polite">
       <div class="figure">
         <span class="label">내 지갑</span>
-        <span class="value"><span id="wallet">0</span>원</span>
+        <span class="value"><span id="wallet">0</span><span class="unit">원</span></span>
       </div>
       <div class="figure">
         <span class="label">내가 기부한 돈</span>
-        <span class="value"><span id="mine">0</span>원</span>
+        <span class="value"><span id="mine">0</span><span class="unit">원</span></span>
       </div>
       <div class="figure">
         <span class="label">다 같이 모은 돈</span>
-        <span class="value strong"><span id="donated">0</span>원</span>
+        <span class="value strong"><span id="donated">0</span><span class="unit">원</span></span>
       </div>
     </section>
 
-    <p class="percent"><span id="percent">0</span>% 모였어요 (남은 돈 <span id="remaining">0</span>원)</p>
+    <p class="percent"><span id="percent">0</span>% 모였어요 (남은 돈 <span id="remaining">0</span><span class="unit">원</span>)</p>
     <p class="sync" id="sync">연결하는 중…</p>
 
-    <section class="actions">
+    <section class="actions" id="actions">
       <button type="button" class="btn earn" id="earnBtn">1원 벌기</button>
       <button type="button" class="btn donate" id="donateBtn" disabled>지갑의 돈 전부 기부하기</button>
     </section>
 
+    <p class="guard-info" id="guardInfo" role="status"></p>
     <p class="status" id="status" role="status"></p>
 
     <footer class="ticket-foot">
       <div class="stub">
-        <p>목표 금액 <strong id="goalText">387,000</strong>원</p>
-        <p class="note">2026년 10월 14일 기준, 인천에서 뉴델리까지 가는 중급 항공사(에어인디아 직항) 편도 요금을 약 387,000원으로 잡았어요. 출발지는 충남 홍성으로 했지만 홍성에는 공항이 없어서 요금은 인천공항 출발 기준 그대로 썼습니다. 항공권 가격은 날마다 바뀌므로 정확한 요금이 아닙니다.</p>
-        <p class="note">이 사이트의 돈은 모두 가상의 돈이며 실제 결제나 송금은 일어나지 않습니다.</p>
+        <p>이번 목표 금액 <strong id="goalText">387,000</strong><span class="unit">원</span></p>
+        <p class="note">한국 구간: 2026년 10월 14일 기준, 인천에서 뉴델리까지 가는 중급 항공사(에어인디아 직항) 편도 요금을 약 387,000원으로 잡았어요. 출발지는 충남 홍성군 내포신도시로 했지만 홍성에는 공항이 없어서 요금은 인천공항 출발 기준 그대로 썼습니다.</p>
+        <p class="note">인도 구간: 2026년 10월 15일 기준, 뉴델리에서 인천까지 가는 최고급 항공사(대한항공 직항) 편도 요금을 약 52,400루피로 잡았어요. 여러 항공권 사이트에 보이는 약 51,500~53,000루피대 가격을 반올림한 값입니다.</p>
+        <p class="note">항공권 가격은 날마다 바뀌므로 정확한 요금이 아닙니다. 이 사이트의 돈은 모두 가상의 돈이며 실제 결제나 송금은 일어나지 않습니다.</p>
       </div>
       <button type="button" class="reset" id="resetBtn">내 기록 지우기</button>
     </footer>
   </main>
+
+  <!-- 자동 클릭 경고 -->
+  <div class="guard" id="guard" hidden role="alertdialog" aria-modal="true" aria-labelledby="guardTitle">
+    <div class="guard-card">
+      <p class="guard-title" id="guardTitle">경고: 사람이 낼 수 없는 속도의 클릭이 감지됐어요</p>
+      <p class="guard-text" id="guardText"></p>
+      <div class="guard-bar"><div class="guard-fill" id="guardFill"></div></div>
+    </div>
+    <button type="button" class="guard-btn" id="guardBtn">사람이에요</button>
+  </div>
+
+  <!-- 지도 -->
+  <dialog class="map-dialog" id="mapDialog" aria-labelledby="mapTitle">
+    <div class="map-inner">
+      <div class="map-head">
+        <h2 id="mapTitle">안이령은 지금 어디에?</h2>
+        <button type="button" class="map-close" id="mapClose">닫기</button>
+      </div>
+      <div class="map-wrap">
+        <img class="map-img" src="map.jpg" alt="세계 지도" width="764" height="513">
+        <svg class="map-svg" id="mapSvg" viewBox="0 0 764 513" aria-hidden="true">
+          <path id="mapShadow" class="map-shadow" d=""/>
+          <path id="mapBase" class="map-base" d=""/>
+          <path id="mapDone" class="map-done" pathLength="1" d=""/>
+          <text class="map-label" id="mapLabelK" x="632" y="182">내포신도시</text>
+          <text class="map-label" id="mapLabelD" x="506" y="218" text-anchor="end">뉴델리</text>
+          <g id="mapPlane" visibility="hidden">
+            <path class="map-plane" transform="translate(-12 -12) rotate(90 12 12)" d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+          </g>
+          <g id="mapPin">
+            <circle class="map-pulse" r="7"/>
+            <g id="mapFlag">
+              <line class="map-pole" x1="0" y1="0" x2="0" y2="-28"/>
+              <path class="map-flag" d="M0 -28 L20 -22.5 L0 -17 Z"/>
+            </g>
+            <circle class="map-dot" r="5"/>
+          </g>
+        </svg>
+      </div>
+      <p class="map-caption"><strong id="mapWhere"></strong><span id="mapProgress"></span></p>
+    </div>
+  </dialog>
 
   <script type="module" src="script.js"></script>
 </body>
