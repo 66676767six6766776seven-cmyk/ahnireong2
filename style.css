@@ -407,3 +407,253 @@ button:focus-visible {
   .route { padding-top: 108px; }
   .journey-msg { margin-left: 18px; margin-right: 18px; }
 }
+
+/* ---------- 머리글: 제목 + 지도 버튼 ---------- */
+.head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.head-row h1 { margin-bottom: 8px; }
+
+.map-btn {
+  flex: none;
+  margin-top: 6px;
+  padding: 8px 18px;
+  border: 2px solid var(--saffron);
+  border-radius: 999px;
+  background: transparent;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.map-btn:hover { background: var(--saffron); color: var(--ink); }
+.map-btn:focus-visible { outline-color: #fff; }
+
+/* 인도에 있을 때는 초록 포인트 */
+.in-india .ticket-head { border-bottom-color: #1a8f3c; }
+
+/* ---------- 자동 클릭 경고 ---------- */
+.guard-info {
+  min-height: 1.4em;
+  margin: 12px 28px 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #c0392b;
+}
+
+.guard {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(27, 37, 89, 0.78);
+}
+
+.guard[hidden] { display: none; }
+
+.guard-card {
+  position: absolute;
+  top: 8vh;
+  left: 50%;
+  width: min(92vw, 460px);
+  transform: translateX(-50%);
+  padding: 20px 22px;
+  border-radius: 16px;
+  background: #fff;
+  border-top: 8px solid #e5232d;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+}
+
+.guard-title {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #c0392b;
+}
+
+.guard-text {
+  margin: 0 0 12px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.guard-bar {
+  height: 10px;
+  border-radius: 6px;
+  background: #f3d3d1;
+  overflow: hidden;
+}
+
+.guard-fill {
+  height: 100%;
+  width: 100%;
+  background: #e5232d;
+}
+
+.guard-btn {
+  position: absolute;
+  left: 50%;
+  top: 65%;
+  transform: translate(-50%, -50%);
+  padding: 16px 26px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--saffron);
+  color: var(--ink);
+  font: inherit;
+  font-size: 1.1rem;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+/* ---------- 날아다니는 클릭 버튼 ---------- */
+.earn-ph { flex: 1 1 220px; }
+
+.btn.flying {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 40;
+  width: 170px;
+  height: 64px;
+  padding: 0;
+  flex: none;
+  font-size: 1.1rem;
+  box-shadow: 0 8px 20px rgba(27, 37, 89, 0.4);
+  will-change: transform;
+}
+
+/* ---------- 지도 ---------- */
+.map-dialog {
+  width: min(94vw, 880px);
+  max-height: 94vh;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  overflow: auto;
+}
+
+.map-dialog::backdrop { background: rgba(27, 37, 89, 0.6); }
+
+.map-inner { padding: 16px 16px 18px; }
+
+.map-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.map-head h2 {
+  margin: 0;
+  font-family: "Black Han Sans", "Noto Sans KR", sans-serif;
+  font-weight: 400;
+  font-size: 1.4rem;
+}
+
+.map-close {
+  padding: 8px 16px;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.map-wrap {
+  position: relative;
+  line-height: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #cfe6f5;
+}
+
+.map-img { display: block; width: 100%; height: auto; }
+
+.map-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.map-shadow {
+  fill: none;
+  stroke: rgba(27, 37, 89, 0.45);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+.map-base {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2.6;
+  stroke-dasharray: 6 5;
+}
+
+.map-done {
+  fill: none;
+  stroke: var(--saffron);
+  stroke-width: 4.5;
+  stroke-linecap: butt;
+  stroke-dasharray: 0 2;
+}
+
+.map-label {
+  font: 700 11px "Noto Sans KR", sans-serif;
+  fill: var(--ink);
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.map-plane {
+  fill: var(--ink);
+  stroke: #fff;
+  stroke-width: 1.2;
+}
+
+.map-pole { stroke: #222; stroke-width: 2; stroke-linecap: round; }
+.map-flag { fill: var(--saffron); stroke: var(--ink); stroke-width: 1.2; stroke-linejoin: round; }
+.map-dot { fill: #e5232d; stroke: #fff; stroke-width: 2; }
+
+.map-pulse {
+  fill: rgba(229, 35, 45, 0.4);
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-pulse 1.6s ease-out infinite;
+}
+
+@keyframes map-pulse {
+  from { transform: scale(0.7); opacity: 1; }
+  to { transform: scale(2.8); opacity: 0; }
+}
+
+.map-caption {
+  margin: 12px 4px 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.map-caption strong { display: block; }
+.map-caption span { color: var(--ink-soft); }
+
+@media (max-width: 520px) {
+  .guard-info { margin-left: 18px; margin-right: 18px; }
+  .map-btn { padding: 6px 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-pulse { animation: none; }
+}
