@@ -724,6 +724,11 @@ async function initBackend() {
     const tripRef = dbMod.ref(db, "v2/trip");
     const feverRef = dbMod.ref(db, "v2/fever");
     const failMsg = "공유 서버에 연결하지 못했어요. Firebase 설정과 규칙을 확인해 주세요.";
+    // 실제 오류 내용도 함께 보여 줘서 원인을 찾기 쉽게 합니다. (permission_denied 이면 규칙 문제)
+    const fail = (err) => {
+      console.error("Firebase 오류:", err);
+      setSync(failMsg + " [" + (err && err.message ? err.message : String(err)) + "]");
+    };
 
     // 내 시계와 서버 시계의 차이 (모두가 같은 시각에 같은 장면을 보도록)
     dbMod.onValue(dbMod.ref(db, ".info/serverTimeOffset"), (snap) => {
@@ -734,25 +739,25 @@ async function initBackend() {
       donated.krw = nonNeg(snap.val());
       setSync("실시간으로 모든 방문자와 함께 모으는 중이에요.");
       render();
-    }, () => setSync(failMsg));
+    }, fail);
 
     dbMod.onValue(inrRef, (snap) => {
       donated.inr = nonNeg(snap.val());
       render();
-    }, () => setSync(failMsg));
+    }, fail);
 
     dbMod.onValue(legRef, (snap) => {
       leg = nonNeg(snap.val());
       render();
       renderFever();
-    }, () => setSync(failMsg));
+    }, fail);
 
     dbMod.onValue(tripRef, (snap) => {
       const v = snap.val();
       trip = v && Number.isFinite(Number(v.startAt))
         ? { leg: nonNeg(v.leg), startAt: Number(v.startAt) }
         : null;
-    }, () => setSync(failMsg));
+    }, fail);
 
     dbMod.onValue(feverRef, (snap) => {
       const v = snap.val() || {};
@@ -760,8 +765,8 @@ async function initBackend() {
       feverFailed = false;
       renderFever();
     }, (err) => {
-      console.error("피버타임 읽기 실패:", err);
       feverFailed = true;
+      fail(err);
       renderFever();
     });
 
@@ -797,7 +802,7 @@ async function initBackend() {
       },
     };
   } catch (e) {
-    setSync("공유 서버를 불러오지 못했어요. 인터넷 연결을 확인해 주세요.");
+    setSync("공유 서버를 불러오지 못했어요. 인터넷 연결을 확인해 주세요. [" + (e && e.message ? e.message : String(e)) + "]");
   }
 }
 
