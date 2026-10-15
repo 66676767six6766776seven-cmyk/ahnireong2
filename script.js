@@ -8,22 +8,35 @@ import { firebaseConfig } from "./firebase-config.js";
 const GOAL_KRW = 387000;
 // 인도 구간 목표: 뉴델리 → 인천, 최고급 항공사(대한항공 직항) 편도 약 52,400루피 (2026-10-15 기준)
 const GOAL_INR = 52400;
+// 무인도 탈출 목표: 1달러씩 모아 1,000,000달러
+const ISLAND_GOAL = 1000000;
 
-// 피버타임: 접속한 모든 사람의 클릭이 하나의 게이지를 채웁니다. (한국·인도 공통)
-// 300번이 모이면 모두에게 동시에 시작되고, 5초 동안 클릭 한 번이 100배입니다.
+// 피버타임: 접속한 모든 사람의 클릭이 하나의 게이지를 채웁니다. (한국·인도·무인도 공통)
+// 300번이 모이면 모두에게 동시에 시작되고 5초 동안 클릭 한 번이 배로 늘어납니다.
 // 게이지 숫자를 바꾸면 firebase-rules.json 의 300 도 함께 고쳐 주세요.
 const FEVER_CLICKS = 300;
-const FEVER_MULT = 100;
+const FEVER_MULT = 100;         // 한국(원)·인도(루피)
+const FEVER_MULT_ISLAND = 500;  // 무인도(달러)
 const FEVER_MS = 5000;
 const FLUSH_MS = 300; // 클릭을 모아서 서버로 보내는 간격
 
 // 비행 (밀리초). 모든 방문자 화면에서 같은 순간에 같은 장면이 나옵니다.
 const JOURNEY = {
-  fly: 8000,  // 비행 시간
-  land: 4000, // 도착 메시지를 보여 주는 시간
+  fly: 8000,    // 비행 시간
+  land: 4000,   // 도착 메시지를 보여 주는 시간
+  rescue: 5000, // 무인도에서 탈출한 뒤 남은 거리를 날아가는 시간
 };
-const PHOTO1 = "photo1.jpg"; // 한국에 있을 때
-const PHOTO2 = "photo2.jpg"; // 인도에 있을 때
+
+// 추락: 비행을 시작할 때 이 확률로 도중에 추락합니다.
+const CRASH = {
+  chance: 0.25,   // 비행 4번 중 1번 꼴
+  minFrac: 0.3,   // 비행의 30% ~ 70% 지점 사이에서 추락
+  maxFrac: 0.7,
+  anim: 2800,     // 추락 장면 길이
+};
+
+const PHOTO1 = "photo1.jpg"; // 한국 쪽에 있을 때
+const PHOTO2 = "photo2.jpg"; // 인도 쪽에 있을 때
 
 // 자동 클릭 방지
 const GUARD = {
@@ -39,12 +52,17 @@ const MAP = {
   korea: { x: 623, y: 165 }, // 충남 홍성군 내포신도시
   delhi: { x: 518, y: 200 }, // 인도 뉴델리
   ctrl: { x: 568, y: 132 },  // 비행 곡선이 휘는 정도
+  w: 764,
+  h: 513,
 };
 
 const MY_KEY = "ahnireong-me";
 const GUARD_KEY = "ahnireong-guard";
-const LOCAL_KEY = "ahnireong-local-v3";
-const LOCAL_FEVER_KEY = "ahnireong-fever-local-v3";
+const LOCAL_KEY = "ahnireong-local-v4";
+const LOCAL_FEVER_KEY = "ahnireong-fever-local-v4";
+
+const UNIT = { krw: "원", inr: "루피", usd: "달러" };
+const UNIT_OBJ = { krw: "원을", inr: "루피를", usd: "달러를" }; // "~을/를" 조사까지 붙인 형태
 
 /* =====================================================================
    화면 요소
@@ -80,9 +98,17 @@ const els = {
   mapBtn: $("mapBtn"),
   mapDialog: $("mapDialog"),
   mapClose: $("mapClose"),
+  mapView: $("mapView"),
+  mapStage: $("mapStage"),
+  mapZoomIn: $("mapZoomIn"),
+  mapZoomOut: $("mapZoomOut"),
+  mapZoomReset: $("mapZoomReset"),
   mapShadow: $("mapShadow"),
   mapBase: $("mapBase"),
   mapDone: $("mapDone"),
+  mapTagK: $("mapTagK"),
+  mapTagD: $("mapTagD"),
+  mapIsland: $("mapIsland"),
   mapPin: $("mapPin"),
   mapFlag: $("mapFlag"),
   mapPlane: $("mapPlane"),
@@ -98,7 +124,7 @@ const reduceMotion =
    ===================================================================== */
 
 // 내 지갑과 내가 기부한 돈은 이 브라우저에 저장하고, 나머지는 서버(모두 공유)에서 가져옵니다.
-let me = { walletKrw: 0, walletInr: 0, mineKrw: 0, mineInr: 0 };
+let me = { walletKrw: 0, walletInr: 0, walletUsd: 0, mineKrw: 0, mineInr: 0, mineUsd: 0 };
 let backend = null;
 let busy = false;
 
@@ -106,11 +132,13 @@ let busy = false;
 //   leg 0: 한국에서 원으로 모금 → 인도행 비행
 //   leg 1: 인도에서 루피로 모금 → 한국행 비행
 //   leg 2: 다시 한국에서 원으로 모금 ... (반복)
-// 모금액은 통화별 "누적 합계"로 저장해서 줄어드는 일이 없습니다.
-let donated = { krw: 0, inr: 0 };
+// 비행 도중 추락하면 무인도에서 달러로 모금해 탈출한 뒤, 원래 가던 곳으로 다시 날아갑니다.
+// 모금액은 "누적 합계"로 저장해서 줄어드는 일이 없습니다.
+let donated = { krw: 0, inr: 0, usd: {} }; // usd: { "L0": 이번 무인도에서 모인 달러, ... }
 let leg = 0;
-let trip = null; // { leg, startAt } : 이번 구간의 비행이 시작된 시각
+let trip = null; // { leg, startAt, crash(0이면 추락 없음), escapedAt(0이면 아직 탈출 전) }
 let tripStarting = false;
+let escaping = false;
 let advancing = false;
 
 let fever = { count: 0, endAt: 0 };
@@ -122,7 +150,6 @@ let wasInFever = false;
 let feverFailed = false;
 
 const goalOfLeg = (l) => (l % 2 === 0 ? GOAL_KRW : GOAL_INR);
-const unitOfLeg = (l) => (l % 2 === 0 ? "원" : "루피");
 const baseOfLeg = (l) => Math.floor(l / 2) * goalOfLeg(l);
 const totalOfLeg = (l) => (l % 2 === 0 ? donated.krw : donated.inr);
 
@@ -136,9 +163,21 @@ const isFever = () => serverNow() < fever.endAt;
 const getShared = () =>
   Math.max(0, Math.min(totalOfLeg(leg) - baseOfLeg(leg), goalOfLeg(leg)));
 
-const walletOf = (l) => (l % 2 === 0 ? me.walletKrw : me.walletInr);
-function addWallet(l, n) {
-  if (l % 2 === 0) me.walletKrw += n; else me.walletInr += n;
+// 이번 무인도에서 모인 달러 (0 ~ 1,000,000)
+const islandShared = () =>
+  Math.max(0, Math.min(nonNeg((donated.usd || {})["L" + leg]), ISLAND_GOAL));
+
+const walletOfKind = (k) => (k === "krw" ? me.walletKrw : k === "inr" ? me.walletInr : me.walletUsd);
+function addWalletKind(k, n) {
+  if (k === "krw") me.walletKrw += n;
+  else if (k === "inr") me.walletInr += n;
+  else me.walletUsd += n;
+}
+const mineOfKind = (k) => (k === "krw" ? me.mineKrw : k === "inr" ? me.mineInr : me.mineUsd);
+function addMineKind(k, n) {
+  if (k === "krw") me.mineKrw += n;
+  else if (k === "inr") me.mineInr += n;
+  else me.mineUsd += n;
 }
 
 function loadMe() {
@@ -148,8 +187,10 @@ function loadMe() {
       me = {
         walletKrw: nonNeg(s.walletKrw !== undefined ? s.walletKrw : s.wallet), // 예전 저장값도 이어받음
         walletInr: nonNeg(s.walletInr),
+        walletUsd: nonNeg(s.walletUsd),
         mineKrw: nonNeg(s.mineKrw !== undefined ? s.mineKrw : s.mine),
         mineInr: nonNeg(s.mineInr),
+        mineUsd: nonNeg(s.mineUsd),
       };
     }
   } catch (e) { /* 저장소를 쓸 수 없으면 새로 시작 */ }
@@ -163,35 +204,6 @@ function setSync(text) {
   els.sync.textContent = text;
 }
 
-function render() {
-  const inIndia = leg % 2 === 1;
-  const unit = unitOfLeg(leg);
-  const goal = goalOfLeg(leg);
-  const shared = getShared();
-  const pct = (shared / goal) * 100;
-  const remaining = Math.max(goal - shared, 0);
-  const wallet = inIndia ? me.walletInr : me.walletKrw;
-  const mine = inIndia ? me.mineInr : me.mineKrw;
-
-  els.wallet.textContent = won(wallet);
-  els.mine.textContent = won(mine);
-  els.donated.textContent = won(shared);
-  els.remaining.textContent = won(remaining);
-  els.percent.textContent = pct.toFixed(2);
-  els.goalText.textContent = won(goal);
-  els.units.forEach((u) => { u.textContent = unit; });
-
-  // 모금 진행선은 출발지 쪽에서 자라납니다 (한국: 왼쪽 → 오른쪽, 인도: 오른쪽 → 왼쪽)
-  els.trackDone.style.width = pct + "%";
-  els.trackDone.style.left = inIndia ? "auto" : "0";
-  els.trackDone.style.right = inIndia ? "0" : "auto";
-  els.track.setAttribute("aria-valuenow", pct.toFixed(2));
-
-  els.donateBtn.disabled = busy || wallet === 0 || remaining === 0;
-  els.ticket.classList.toggle("arrived", remaining === 0);
-  els.ticket.classList.toggle("in-india", inIndia);
-}
-
 /* =====================================================================
    비행 (모금 완료 후)
    ===================================================================== */
@@ -199,6 +211,8 @@ function render() {
 const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
 // 지금 어떤 장면인지 계산합니다. p: 0 = 한국(홍성), 1 = 인도(뉴델리)
+// phase: funding(모금) boarding(탑승) flying(비행) crashing(추락) island(무인도 모금)
+//        escaping(탈출 준비) rescue(구조 비행) landed(도착) done(다음 구간으로)
 function journeyState() {
   const origin = leg % 2 === 0 ? 0 : 1;
   const dest = 1 - origin;
@@ -207,14 +221,73 @@ function journeyState() {
       ? { phase: "boarding", p: origin }
       : { phase: "funding", p: origin };
   }
+
+  const crash = trip.crash > 0 ? trip.crash : 0;
   const e = Math.max(serverNow() - trip.startAt, 0);
-  if (e < JOURNEY.fly) return { phase: "flying", p: origin + (dest - origin) * ease(e / JOURNEY.fly) };
-  if (e < JOURNEY.fly + JOURNEY.land) return { phase: "landed", p: dest };
+  const flyEnd = crash ? JOURNEY.fly * crash : JOURNEY.fly;
+
+  if (e < flyEnd) return { phase: "flying", p: origin + (dest - origin) * ease(e / JOURNEY.fly) };
+
+  if (!crash) {
+    if (e < JOURNEY.fly + JOURNEY.land) return { phase: "landed", p: dest };
+    return { phase: "done", p: dest };
+  }
+
+  // 추락한 경우: 추락 지점은 비행선 위의 한 점입니다.
+  const pc = origin + (dest - origin) * ease(crash);
+  const e1 = e - flyEnd;
+  if (e1 < CRASH.anim) return { phase: "crashing", p: pc, t: e1 / CRASH.anim };
+
+  if (!trip.escapedAt) {
+    return { phase: islandShared() >= ISLAND_GOAL ? "escaping" : "island", p: pc };
+  }
+
+  const e2 = Math.max(serverNow() - trip.escapedAt, 0);
+  if (e2 < JOURNEY.rescue) return { phase: "rescue", p: pc + (dest - pc) * ease(e2 / JOURNEY.rescue) };
+  if (e2 < JOURNEY.rescue + JOURNEY.land) return { phase: "landed", p: dest };
   return { phase: "done", p: dest };
+}
+
+// 지금 쓰는 돈의 종류와 목표, 모인 금액
+function ctxOf(st) {
+  if (st.phase === "island" || st.phase === "escaping") {
+    return { kind: "usd", unit: UNIT.usd, goal: ISLAND_GOAL, shared: islandShared(), mult: FEVER_MULT_ISLAND };
+  }
+  const kind = leg % 2 === 0 ? "krw" : "inr";
+  return { kind, unit: UNIT[kind], goal: goalOfLeg(leg), shared: getShared(), mult: FEVER_MULT };
+}
+
+function render() {
+  const st = journeyState();
+  const ctx = ctxOf(st);
+  const pct = (ctx.shared / ctx.goal) * 100;
+  const remaining = Math.max(ctx.goal - ctx.shared, 0);
+  const wallet = walletOfKind(ctx.kind);
+
+  els.wallet.textContent = won(wallet);
+  els.mine.textContent = won(mineOfKind(ctx.kind));
+  els.donated.textContent = won(ctx.shared);
+  els.remaining.textContent = won(remaining);
+  els.percent.textContent = pct.toFixed(2);
+  els.goalText.textContent = won(ctx.goal);
+  els.units.forEach((u) => { u.textContent = ctx.unit; });
+
+  // 모금 진행선은 출발지 쪽에서 자라납니다 (한국: 왼쪽 → 오른쪽, 인도: 오른쪽 → 왼쪽)
+  const fromRight = leg % 2 === 1;
+  els.trackDone.style.width = pct + "%";
+  els.trackDone.style.left = fromRight ? "auto" : "0";
+  els.trackDone.style.right = fromRight ? "0" : "auto";
+  els.track.setAttribute("aria-valuenow", pct.toFixed(2));
+
+  els.donateBtn.disabled = busy || wallet === 0 || remaining === 0;
+  els.ticket.classList.toggle("arrived", remaining === 0);
+  els.ticket.classList.toggle("in-india", ctx.kind === "inr");
+  els.ticket.classList.toggle("on-island", ctx.kind === "usd");
 }
 
 function messageFor(phase) {
   const toIndia = leg % 2 === 0;
+  const destTo = toIndia ? "인도 뉴델리로" : "충남 홍성으로";
   switch (phase) {
     case "funding":
       return toIndia
@@ -228,6 +301,14 @@ function messageFor(phase) {
       return toIndia
         ? "안이령이 인도 뉴델리로 날아가는 중이에요…"
         : "안이령이 충남 홍성으로 돌아가는 중이에요…";
+    case "crashing":
+      return "무인도에 추락했습니다";
+    case "island":
+      return `안이령이 무인도에 갇혔어요! 달러를 1달러씩 모아 ${won(ISLAND_GOAL)}달러를 채우면 탈출할 수 있어요.`;
+    case "escaping":
+      return "탈출 비용이 모두 모였어요! 구조 비행기가 곧 출발합니다.";
+    case "rescue":
+      return `안이령이 무인도를 탈출해 ${destTo} 다시 날아가는 중이에요…`;
     default: // landed, done
       return toIndia
         ? "안이령이 무사히 인도로 도착했습니다"
@@ -250,28 +331,39 @@ function setPhoto(which) {
 
 let lastKey = "";
 function renderJourney() {
-  const { phase, p } = journeyState();
+  const st = journeyState();
+  const { phase, p } = st;
   const arrivedPhase = phase === "landed" || phase === "done";
   const originPhoto = leg % 2 === 0 ? 1 : 2;
   const destPhoto = 3 - originPhoto;
 
   els.craft.style.setProperty("--p", reduceMotion ? (p >= 0.5 ? 1 : 0) : p);
   els.craft.classList.toggle("back", leg % 2 === 1); // 한국행일 때는 왼쪽을 바라봄
+  els.craft.classList.toggle("crashing", phase === "crashing");
+  els.craft.classList.toggle("stranded", phase === "island" || phase === "escaping");
   setPhoto(arrivedPhase ? destPhoto : originPhoto);
 
   const key = phase + ":" + leg;
   if (key !== lastKey) {
     lastKey = key;
     els.journeyMsg.textContent = messageFor(phase);
-    els.journeyMsg.dataset.phase = arrivedPhase ? "arrived" : phase;
+    els.journeyMsg.dataset.phase = arrivedPhase ? "arrived" : phase === "crashing" ? "crash" : phase;
+    render();       // 장면이 바뀌면 돈의 종류(원·루피·달러)도 바뀔 수 있음
+    renderFever();
   }
 
-  // 비행 시작과 다음 구간 시작은 누군가 한 명이 서버에 기록해 주면 모두에게 반영됩니다.
+  // 비행 시작, 탈출, 다음 구간 시작은 누군가 한 명이 서버에 기록해 주면 모두에게 반영됩니다.
   if (!backend) return;
   if (phase === "boarding" && !tripStarting) {
     tripStarting = true;
     backend.startTrip(leg).catch(() => {}).finally(() => {
       setTimeout(() => { tripStarting = false; }, 1500);
+    });
+  }
+  if (phase === "escaping" && !escaping) {
+    escaping = true;
+    backend.escape(leg).catch(() => {}).finally(() => {
+      setTimeout(() => { escaping = false; }, 1500);
     });
   }
   if (phase === "done" && !advancing) {
@@ -305,13 +397,13 @@ function applyClicks(cur, n, now) {
 function renderFever() {
   const now = serverNow();
   const active = now < fever.endAt;
-  const unit = unitOfLeg(leg);
+  const ctx = ctxOf(journeyState());
 
   if (active !== wasInFever) {
     wasInFever = active;
     if (active) {
       pending = 0;
-      els.status.textContent = `피버타임 시작! ${FEVER_MS / 1000}초 동안 모두의 클릭이 ${won(FEVER_MULT)}배예요.`;
+      els.status.textContent = `피버타임 시작! ${FEVER_MS / 1000}초 동안 클릭이 ${won(ctx.mult)}배예요.`;
     } else {
       els.status.textContent = `피버타임이 끝났어요. 다시 ${FEVER_CLICKS}번을 모두 함께 채워 보세요!`;
     }
@@ -323,15 +415,15 @@ function renderFever() {
     const left = Math.min(Math.max(fever.endAt - now, 0), FEVER_MS);
     els.feverFill.style.width = (left / FEVER_MS) * 100 + "%";
     els.feverText.textContent =
-      `피버타임! 클릭 ×${won(FEVER_MULT)}배 (남은 시간 ${(left / 1000).toFixed(1)}초)`;
-    els.earnBtn.textContent = `${won(FEVER_MULT)}${unit} 벌기`;
+      `피버타임! 클릭 ×${won(ctx.mult)}배 (남은 시간 ${(left / 1000).toFixed(1)}초)`;
+    els.earnBtn.textContent = `${won(ctx.mult)}${ctx.unit} 벌기`;
   } else {
     const shown = Math.min(fever.count + pending, FEVER_CLICKS);
     els.feverFill.style.width = (shown / FEVER_CLICKS) * 100 + "%";
     els.feverText.textContent = feverFailed
       ? `${shown} / ${FEVER_CLICKS}번 (서버에 저장되지 않고 있어요. Firebase 규칙을 확인해 주세요)`
-      : `${shown} / ${FEVER_CLICKS}번 (모두의 클릭이 함께 채워요)`;
-    els.earnBtn.textContent = `1${unit} 벌기`;
+      : `${shown} / ${FEVER_CLICKS}번 (안이령이 인도로 하루 빨리 가게 도와주는 버튼입니다.)`;
+    els.earnBtn.textContent = `1${ctx.unit} 벌기`;
   }
 }
 
@@ -558,7 +650,7 @@ function flyLoop(ts) {
 }
 
 /* =====================================================================
-   지도
+   지도 (확대·축소·이동 가능)
    ===================================================================== */
 
 const MAP_FWD = `M${MAP.korea.x} ${MAP.korea.y} Q${MAP.ctrl.x} ${MAP.ctrl.y} ${MAP.delhi.x} ${MAP.delhi.y}`;
@@ -589,73 +681,247 @@ function mapPointAt(frac) {
   return bez(t);
 }
 
+// ----- 확대·축소 상태 -----
+// view.k: 지도 한 칸이 화면 몇 픽셀인지, view.tx/ty: 지도를 옮긴 거리(px)
+const view = { k: 1, tx: 0, ty: 0 };
+
+function viewSize() {
+  const r = els.mapView.getBoundingClientRect();
+  return { w: r.width || 1, h: r.height || 1 };
+}
+
+function clampK(k) {
+  const { w, h } = viewSize();
+  const kMin = Math.max(w / MAP.w, h / MAP.h); // 지도가 화면을 항상 꽉 채우도록
+  return Math.min(Math.max(k, kMin), kMin * 12);
+}
+
+function applyView() {
+  const { w, h } = viewSize();
+  view.k = clampK(view.k);
+  view.tx = Math.min(0, Math.max(view.tx, w - MAP.w * view.k));
+  view.ty = Math.min(0, Math.max(view.ty, h - MAP.h * view.k));
+  els.mapStage.style.transform = `translate(${view.tx}px, ${view.ty}px) scale(${view.k})`;
+}
+
+// (cx, cy) 화면 좌표를 중심으로 확대·축소
+function zoomAt(cx, cy, factor) {
+  const mx = (cx - view.tx) / view.k;
+  const my = (cy - view.ty) / view.k;
+  view.k = clampK(view.k * factor);
+  view.tx = cx - mx * view.k;
+  view.ty = cy - my * view.k;
+  applyView();
+}
+
+// 처음 화면: 한국과 인도가 화면 양쪽 끝에 오도록 확대
+function fitInitial() {
+  const { w, h } = viewSize();
+  const spanX = Math.abs(MAP.korea.x - MAP.delhi.x);
+  let k = w / (spanX * 1.5);
+  k = Math.min(k, h / 80); // 세로로도 비행선과 글자가 들어오도록
+  view.k = k;
+  const cx = (MAP.korea.x + MAP.delhi.x) / 2;
+  const cy = 182;
+  view.tx = w / 2 - cx * view.k;
+  view.ty = h / 2 - cy * view.k;
+  applyView();
+}
+
+// 포인터(마우스·터치) 이동과 두 손가락 확대
+const pointers = new Map();
+let panStart = null;
+let pinchStart = null;
+
+function pinchInfo() {
+  const [a, b] = [...pointers.values()];
+  const r = els.mapView.getBoundingClientRect();
+  return {
+    dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+    cx: (a.x + b.x) / 2 - r.left,
+    cy: (a.y + b.y) / 2 - r.top,
+  };
+}
+
+els.mapView.addEventListener("pointerdown", (e) => {
+  if (e.target.closest(".map-zoom")) return;
+  els.mapView.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1) {
+    panStart = { x: e.clientX, y: e.clientY, tx: view.tx, ty: view.ty };
+  } else if (pointers.size === 2) {
+    const info = pinchInfo();
+    pinchStart = { ...info, k: view.k, tx: view.tx, ty: view.ty };
+    panStart = null;
+  }
+  els.mapView.classList.add("dragging");
+});
+
+els.mapView.addEventListener("pointermove", (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 1 && panStart) {
+    view.tx = panStart.tx + (e.clientX - panStart.x);
+    view.ty = panStart.ty + (e.clientY - panStart.y);
+    applyView();
+  } else if (pointers.size === 2 && pinchStart) {
+    const now = pinchInfo();
+    const mx = (pinchStart.cx - pinchStart.tx) / pinchStart.k;
+    const my = (pinchStart.cy - pinchStart.ty) / pinchStart.k;
+    view.k = clampK(pinchStart.k * (now.dist / pinchStart.dist));
+    view.tx = now.cx - mx * view.k;
+    view.ty = now.cy - my * view.k;
+    applyView();
+  }
+});
+
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  pinchStart = null;
+  if (pointers.size === 1) {
+    const [p] = [...pointers.values()];
+    panStart = { x: p.x, y: p.y, tx: view.tx, ty: view.ty };
+  } else {
+    panStart = null;
+    if (pointers.size === 0) els.mapView.classList.remove("dragging");
+  }
+}
+els.mapView.addEventListener("pointerup", endPointer);
+els.mapView.addEventListener("pointercancel", endPointer);
+
+els.mapView.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const r = els.mapView.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0016));
+}, { passive: false });
+
+els.mapZoomIn.addEventListener("click", () => {
+  const { w, h } = viewSize();
+  zoomAt(w / 2, h / 2, 1.5);
+});
+els.mapZoomOut.addEventListener("click", () => {
+  const { w, h } = viewSize();
+  zoomAt(w / 2, h / 2, 1 / 1.5);
+});
+els.mapZoomReset.addEventListener("click", fitInitial);
+window.addEventListener("resize", () => { if (els.mapDialog.open) applyView(); });
+
+// 글자·점·깃발은 지도를 확대해도 같은 크기로 보이도록 크기를 거꾸로 맞춰 둡니다.
+function place(el, x, y, scale, deg = 0) {
+  el.setAttribute("transform", `translate(${x.toFixed(2)} ${y.toFixed(2)}) rotate(${deg.toFixed(1)}) scale(${scale.toFixed(4)})`);
+}
+
 let mapDoneD = "";
 function renderMap() {
-  const { phase, p } = journeyState();
+  const st = journeyState();
+  const { phase, p } = st;
   const toIndia = leg % 2 === 0;
   const origin = toIndia ? 0 : 1;
-  const goal = goalOfLeg(leg);
-  const unit = unitOfLeg(leg);
-  const shared = getShared();
+  const ctx = ctxOf(st);
   const funding = phase === "funding" || phase === "boarding";
-  const flying = phase === "flying";
-  const frac = funding ? shared / goal : Math.abs(p - origin); // 출발지에서 목적지 방향으로 얼마나 왔는지
+  const flying = phase === "flying" || phase === "rescue";
+  const onIsland = phase === "crashing" || phase === "island" || phase === "escaping";
+  const hasCrash = !!(trip && trip.leg === leg && trip.crash > 0 && (phase !== "funding" && phase !== "boarding" && phase !== "flying"));
+  const frac = funding ? ctx.shared / ctx.goal : Math.abs(p - origin); // 출발지에서 목적지 방향으로 얼마나 왔는지
+  const s = 1 / view.k;
 
-  // 한국 ↔ 인도를 잇는 비행선과 진행도
+  // 한국 ↔ 인도를 잇는 비행선과 진행도 (확대해도 선 굵기는 같게)
   els.mapShadow.setAttribute("d", MAP_FWD);
   els.mapBase.setAttribute("d", MAP_FWD);
   const doneD = toIndia ? MAP_FWD : MAP_REV;
   if (doneD !== mapDoneD) { els.mapDone.setAttribute("d", doneD); mapDoneD = doneD; }
+  els.mapShadow.style.strokeWidth = (8 * s).toFixed(3);
+  els.mapBase.style.strokeWidth = (3 * s).toFixed(3);
+  els.mapBase.style.strokeDasharray = `${(9 * s).toFixed(3)} ${(7 * s).toFixed(3)}`;
+  els.mapDone.style.strokeWidth = (5 * s).toFixed(3);
   els.mapDone.style.strokeDasharray = `${frac.toFixed(4)} 2`;
 
-  // 빨간 점(현재 위치), 깃발(머무는 도시), 비행기(비행 중)
+  // 도시 이름
+  place(els.mapTagK, MAP.korea.x, MAP.korea.y, s);
+  place(els.mapTagD, MAP.delhi.x, MAP.delhi.y, s);
+
+  // 빨간 점(현재 위치), 깃발(머무는 곳), 비행기(비행 중)
   const pos = mapPointAt(p);
-  els.mapPin.setAttribute("transform", `translate(${pos.x.toFixed(1)} ${pos.y.toFixed(1)})`);
-  els.mapFlag.style.display = flying ? "none" : "";
+  place(els.mapPin, pos.x, pos.y, s);
+  els.mapFlag.style.display = flying || phase === "crashing" ? "none" : "";
   els.mapPlane.setAttribute("visibility", flying ? "visible" : "hidden");
   if (flying) {
     const a = mapPointAt(p - 0.01), b = mapPointAt(p + 0.01);
     const dx = toIndia ? b.x - a.x : a.x - b.x;
     const dy = toIndia ? b.y - a.y : a.y - b.y;
-    const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
-    els.mapPlane.setAttribute("transform", `translate(${pos.x.toFixed(1)} ${pos.y.toFixed(1)}) rotate(${deg.toFixed(1)})`);
+    place(els.mapPlane, pos.x, pos.y, s * 1.3, (Math.atan2(dy, dx) * 180) / Math.PI);
+  }
+
+  // 무인도 표시: 추락한 지점에 섬을 그려 둡니다.
+  if (hasCrash) {
+    const pc = leg % 2 === 0
+      ? 0 + (1 - 0) * ease(trip.crash)
+      : 1 + (0 - 1) * ease(trip.crash);
+    const ip = mapPointAt(pc);
+    els.mapIsland.style.display = "";
+    place(els.mapIsland, ip.x, ip.y, s * 0.9);
+  } else {
+    els.mapIsland.style.display = "none";
   }
 
   // 글
   if (flying) {
-    els.mapWhere.textContent = toIndia
-      ? "비행 중: 내포신도시 → 인도 뉴델리"
-      : "비행 중: 인도 뉴델리 → 내포신도시";
+    els.mapWhere.textContent = phase === "rescue"
+      ? "구조 비행 중: 무인도 → " + (toIndia ? "인도 뉴델리" : "내포신도시")
+      : (toIndia ? "비행 중: 내포신도시 → 인도 뉴델리" : "비행 중: 인도 뉴델리 → 내포신도시");
     els.mapProgress.textContent = `비행 진행도 ${(frac * 100).toFixed(0)}%`;
+  } else if (onIsland) {
+    els.mapWhere.textContent = phase === "crashing"
+      ? "무인도에 추락했습니다"
+      : "현재 위치: 무인도 (한국과 인도 사이 비행 경로 위)";
+    els.mapProgress.textContent = phase === "crashing"
+      ? "비행 진행도 " + (frac * 100).toFixed(0) + "%에서 추락"
+      : `무인도 탈출 모금 ${(ctx.shared / ctx.goal * 100).toFixed(1)}% (${won(ctx.shared)} / ${won(ctx.goal)}달러)`;
   } else {
     els.mapWhere.textContent = p < 0.5
       ? "현재 위치: 대한민국 충청남도 홍성군 내포신도시"
       : "현재 위치: 인도 뉴델리";
     els.mapProgress.textContent = funding
-      ? `${toIndia ? "인도행" : "한국행"} 비행기 값 모금 ${(frac * 100).toFixed(1)}% (${won(shared)} / ${won(goal)}${unit})`
+      ? `${toIndia ? "인도행" : "한국행"} 비행기 값 모금 ${(frac * 100).toFixed(1)}% (${won(ctx.shared)} / ${won(ctx.goal)}${ctx.unit})`
       : "무사히 도착했어요! 비행 진행도 100%";
   }
 }
 
 function openMap() {
-  renderMap();
   if (typeof els.mapDialog.showModal === "function") els.mapDialog.showModal();
   else els.mapDialog.setAttribute("open", "");
+  fitInitial(); // 열 때마다 한국과 인도가 양쪽에 보이는 처음 화면으로
+  renderMap();
+  requestAnimationFrame(() => { fitInitial(); renderMap(); }); // 화면 크기가 확정된 뒤 한 번 더
 }
 
 /* =====================================================================
    저장소(백엔드)
    ===================================================================== */
 
+// 비행을 시작할 때 추락할지 정합니다. (0이면 추락 없음, 아니면 비행의 몇 % 지점에서 추락할지)
+function rollCrash() {
+  if (Math.random() >= CRASH.chance) return 0;
+  return Math.round((CRASH.minFrac + Math.random() * (CRASH.maxFrac - CRASH.minFrac)) * 1000) / 1000;
+}
+
+const parseTrip = (v) =>
+  v && Number.isFinite(Number(v.startAt))
+    ? {
+        leg: nonNeg(v.leg),
+        startAt: Number(v.startAt),
+        crash: Math.min(Math.max(Number(v.crash) || 0, 0), 1),
+        escapedAt: Number(v.escapedAt) || 0,
+      }
+    : null;
+
 function setupLocalBackend(message) {
   try {
     const s = JSON.parse(localStorage.getItem(LOCAL_KEY));
     if (s) {
-      donated = { krw: nonNeg(s.krw), inr: nonNeg(s.inr) };
+      donated = { krw: nonNeg(s.krw), inr: nonNeg(s.inr), usd: s.usd && typeof s.usd === "object" ? s.usd : {} };
       leg = nonNeg(s.leg);
-      trip = s.trip && Number.isFinite(Number(s.trip.startAt))
-        ? { leg: nonNeg(s.trip.leg), startAt: Number(s.trip.startAt) }
-        : null;
+      trip = parseTrip(s.trip);
     }
   } catch (e) { /* 무시 */ }
   try {
@@ -665,23 +931,36 @@ function setupLocalBackend(message) {
 
   const saveLocal = () => {
     try {
-      localStorage.setItem(LOCAL_KEY, JSON.stringify({ krw: donated.krw, inr: donated.inr, leg, trip }));
+      localStorage.setItem(LOCAL_KEY, JSON.stringify({ krw: donated.krw, inr: donated.inr, usd: donated.usd, leg, trip }));
     } catch (e) { /* 무시 */ }
   };
 
   backend = {
-    async add(l, amount) {
+    async add(kind, l, amount) {
+      if (kind === "usd") {
+        const key = "L" + l;
+        const cur = nonNeg(donated.usd[key]);
+        const next = Math.max(cur, Math.min(cur + amount, ISLAND_GOAL));
+        donated.usd[key] = next;
+        saveLocal();
+        return next - cur;
+      }
       const cap = baseOfLeg(l) + goalOfLeg(l);
-      const key = l % 2 === 0 ? "krw" : "inr";
-      const cur = donated[key];
+      const cur = donated[kind];
       const next = Math.max(cur, Math.min(cur + amount, cap));
-      donated[key] = next;
+      donated[kind] = next;
       saveLocal();
       return next - cur;
     },
     async startTrip(l) {
       if (!(trip && trip.leg === l)) {
-        trip = { leg: l, startAt: Date.now() };
+        trip = { leg: l, startAt: Date.now(), crash: rollCrash(), escapedAt: 0 };
+        saveLocal();
+      }
+    },
+    async escape(l) {
+      if (trip && trip.leg === l && trip.crash > 0 && !trip.escapedAt) {
+        trip = { ...trip, escapedAt: Date.now() };
         saveLocal();
       }
     },
@@ -720,6 +999,7 @@ async function initBackend() {
     const db = dbMod.getDatabase(app);
     const krwRef = dbMod.ref(db, "v2/donatedKrw");
     const inrRef = dbMod.ref(db, "v2/donatedInr");
+    const usdRef = dbMod.ref(db, "v2/usd");
     const legRef = dbMod.ref(db, "v2/leg");
     const tripRef = dbMod.ref(db, "v2/trip");
     const feverRef = dbMod.ref(db, "v2/fever");
@@ -746,6 +1026,11 @@ async function initBackend() {
       render();
     }, fail);
 
+    dbMod.onValue(usdRef, (snap) => {
+      donated.usd = snap.val() || {};
+      render();
+    }, fail);
+
     dbMod.onValue(legRef, (snap) => {
       leg = nonNeg(snap.val());
       render();
@@ -753,10 +1038,7 @@ async function initBackend() {
     }, fail);
 
     dbMod.onValue(tripRef, (snap) => {
-      const v = snap.val();
-      trip = v && Number.isFinite(Number(v.startAt))
-        ? { leg: nonNeg(v.leg), startAt: Number(v.startAt) }
-        : null;
+      trip = parseTrip(snap.val());
     }, fail);
 
     dbMod.onValue(feverRef, (snap) => {
@@ -771,11 +1053,20 @@ async function initBackend() {
     });
 
     backend = {
-      // 이번 구간의 목표까지만 안전하게 더하고, 실제로 더해진 금액을 돌려줍니다.
-      async add(l, amount) {
+      // 목표까지만 안전하게 더하고, 실제로 더해진 금액을 돌려줍니다.
+      async add(kind, l, amount) {
         let added = 0;
+        if (kind === "usd") {
+          await dbMod.runTransaction(dbMod.ref(db, "v2/usd/L" + l), (current) => {
+            const cur = nonNeg(current);
+            const next = Math.max(cur, Math.min(cur + amount, ISLAND_GOAL));
+            added = next - cur;
+            return next;
+          });
+          return added;
+        }
         const cap = baseOfLeg(l) + goalOfLeg(l);
-        await dbMod.runTransaction(l % 2 === 0 ? krwRef : inrRef, (current) => {
+        await dbMod.runTransaction(kind === "krw" ? krwRef : inrRef, (current) => {
           const cur = nonNeg(current);
           const next = Math.max(cur, Math.min(cur + amount, cap));
           added = next - cur;
@@ -783,11 +1074,22 @@ async function initBackend() {
         });
         return added;
       },
-      // 이번 구간의 비행을 시작합니다. 이미 시작됐다면 그대로 둡니다.
+      // 이번 구간의 비행을 시작합니다. 이미 시작됐다면 그대로 둡니다. (추락 여부도 이때 정해집니다.)
       async startTrip(l) {
         await dbMod.runTransaction(tripRef, (cur) =>
-          cur && Number(cur.leg) === l ? cur : { leg: l, startAt: serverNow() }
+          cur && Number(cur.leg) === l
+            ? cur
+            : { leg: l, startAt: serverNow(), crash: rollCrash(), escapedAt: 0 }
         );
+      },
+      // 무인도 탈출 비용이 모이면 구조 비행을 시작합니다.
+      async escape(l) {
+        await dbMod.runTransaction(tripRef, (cur) => {
+          if (cur && Number(cur.leg) === l && Number(cur.crash) > 0 && !Number(cur.escapedAt)) {
+            return { leg: l, startAt: Number(cur.startAt), crash: Number(cur.crash), escapedAt: serverNow() };
+          }
+          return cur;
+        });
       },
       // 비행이 끝나면 다음 구간으로 넘어갑니다. (한국 → 인도 → 한국 → …)
       async nextLeg(l) {
@@ -819,10 +1121,11 @@ function earn(e) {
     return;
   }
 
+  const ctx = ctxOf(journeyState());
   if (isFever()) {
-    addWallet(leg, FEVER_MULT);
+    addWalletKind(ctx.kind, ctx.mult);
   } else {
-    addWallet(leg, 1);
+    addWalletKind(ctx.kind, 1);
     els.status.textContent = "";
     pending = Math.min(pending + 1, FEVER_CLICKS);
     if (fever.count + pending >= FEVER_CLICKS) {
@@ -841,7 +1144,9 @@ function earn(e) {
 
 async function donate() {
   const L = leg;
-  const amount = walletOf(L);
+  const ctx = ctxOf(journeyState());
+  const kind = ctx.kind;
+  const amount = walletOfKind(kind);
   if (busy || amount === 0) return;
   if (!backend) {
     els.status.textContent = "아직 서버에 연결되지 않았어요. 잠시 후 다시 눌러 주세요.";
@@ -852,13 +1157,13 @@ async function donate() {
   render();
 
   try {
-    const added = await backend.add(L, amount);
-    addWallet(L, -added);
-    if (L % 2 === 0) me.mineKrw += added; else me.mineInr += added;
+    const added = await backend.add(kind, L, amount);
+    addWalletKind(kind, -added);
+    addMineKind(kind, added);
     saveMe();
     els.status.textContent =
       added > 0
-        ? `${won(added)}${unitOfLeg(L)}을(를) 안이령에게 기부했어요. 고마워요!`
+        ? `${won(added)}${UNIT_OBJ[kind]} 안이령에게 기부했어요. 고마워요!`
         : "이번 모금은 이미 목표 금액이 모두 모였어요.";
   } catch (e) {
     els.status.textContent = "기부하지 못했어요. 지갑의 돈은 그대로예요. 잠시 후 다시 시도해 주세요.";
@@ -870,10 +1175,10 @@ async function donate() {
 
 function resetMine() {
   const ok = window.confirm(
-    "내 지갑과 내 기부 기록(원·루피)만 지워져요. 다 같이 모은 돈은 그대로 남아요. 계속할까요?"
+    "내 지갑과 내 기부 기록(원·루피·달러)만 지워져요. 다 같이 모은 돈은 그대로 남아요. 계속할까요?"
   );
   if (!ok) return;
-  me = { walletKrw: 0, walletInr: 0, mineKrw: 0, mineInr: 0 };
+  me = { walletKrw: 0, walletInr: 0, walletUsd: 0, mineKrw: 0, mineInr: 0, mineUsd: 0 };
   els.status.textContent = "";
   saveMe();
   render();
