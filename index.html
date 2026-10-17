@@ -183,8 +183,8 @@
       <ul class="shop-list">
         <li class="shop-item">
           <div>
-            <strong>100배 부스트 (5분)</strong>
-            <p>5분 동안 내 클릭이 ×100이 돼요. 쓰는 도중에 또 사면 5분이 더 늘어나요.</p>
+            <strong>5배 부스트 (5분)</strong>
+            <p>5분 동안 내 클릭이 ×5가 돼요. 쓰는 도중에 또 사면 5분이 더 늘어나요.</p>
             <p class="shop-state" id="boostState"></p>
           </div>
           <button type="button" class="buy-btn" id="buyBoost">1,000원 구매</button>
@@ -195,10 +195,18 @@
             <p>평생 내 모든 클릭이 ×10이 돼요. 한 번만 살 수 있어요.</p>
             <p class="shop-state" id="permState"></p>
           </div>
-          <button type="button" class="buy-btn" id="buyPerm">100,000원 구매</button>
+          <button type="button" class="buy-btn" id="buyPerm">1,000,000원 구매</button>
+        </li>
+        <li class="shop-item">
+          <div>
+            <strong>안이령과 만나기</strong>
+            <p>안이령을 직접 만날 수 있는 특별한 아이템이에요.</p>
+            <p class="shop-state">준비중</p>
+          </div>
+          <button type="button" class="buy-btn" id="meetBtn">100,000,000원 구매</button>
         </li>
       </ul>
-      <p class="modal-note">아이템 효과는 서로 곱해져요. 피버타임 ×100 · 영구 ×10 · 부스트 ×100이 모두 적용될 수 있어요.</p>
+      <p class="modal-note">아이템 효과는 서로 곱해져요. 피버타임 ×100 · 영구 ×10 · 부스트 ×5가 모두 적용될 수 있어요.</p>
       <p class="modal-msg" id="shopMsg" role="status"></p>
     </div>
   </dialog>
@@ -219,7 +227,7 @@
         </label>
       </div>
       <div class="ex-amount">
-        <label>금액 <input type="number" id="exAmount" min="1" step="1" inputmode="numeric" placeholder="바꿀 금액"></label>
+        <label>금액 <input type="text" id="exAmount" inputmode="numeric" autocomplete="off" placeholder="바꿀 금액"></label>
         <button type="button" class="reset" id="exAll">전부</button>
       </div>
       <p class="ex-preview" id="exPreview"></p>
