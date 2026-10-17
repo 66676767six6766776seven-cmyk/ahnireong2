@@ -1,4 +1,4 @@
-import { firebaseConfig } from "./firebase-config.js";
+import { firebaseConfig } from "./firebase-config.js?v=7";
 
 /* =====================================================================
    설정값 (숫자만 바꾸면 됩니다)
@@ -56,7 +56,6 @@ const MAP = {
   h: 513,
 };
 
-const MY_KEY = "ahnireong-me";
 const GUARD_KEY = "ahnireong-guard";
 const LOCAL_KEY = "ahnireong-local-v4";
 const LOCAL_FEVER_KEY = "ahnireong-fever-local-v4";
@@ -64,6 +63,49 @@ const LOCAL_FEVER_KEY = "ahnireong-fever-local-v4";
 const UNIT = { krw: "원", inr: "루피", usd: "달러" };
 const UNIT_OBJ = { krw: "원을", inr: "루피를", usd: "달러를" }; // "~을/를" 조사까지 붙인 형태
 
+
+// 사이트 버전 (화면 맨 아래에 표시돼요. 앱마다 서로 다른 버전을 보고 있는지 확인할 때 쓰세요.)
+const VERSION = 7;
+
+// 환전: 1원 = 15루피, 1달러 = 1,500원 (루피를 1로 놓았을 때의 값)
+const RATE = { inr: 1, krw: 15, usd: 22500 };
+
+// 상점 (가격은 모두 원)
+const SHOP = {
+  boostPrice: 1000,           // 100배 부스트 5분
+  boostMult: 100,
+  boostMs: 5 * 60 * 1000,
+  permPrice: 100000,          // 영구 ×10
+  permMult: 10,
+};
+
+// 은행
+const BANK = {
+  rate: 0.04,                           // 이자: 12시간에 4% (통장과 대출 모두)
+  periodMs: 12 * 60 * 60 * 1000,
+  loanDueMs: 24 * 60 * 60 * 1000,       // 대출 만기: 빌린 뒤 24시간
+  startCredit: 500,                     // 처음 신용 점수
+  maxCredit: 1000,
+  limitPerPoint: 1000,                  // 신용 1점당 대출 한도 1,000원 상당
+  repayBonus: 20,                       // 만기 안에 다 갚으면 +20점
+  latePenalty: 40,                      // 연체 12시간마다 -40점
+};
+const BANKS = [
+  { key: "krw", name: "한국은행", unit: "원" },
+  { key: "inr", name: "인도은행", unit: "루피" },
+  { key: "usd", name: "미국은행", unit: "달러" },
+];
+
+// 랭킹
+const RANK_LIMIT = 20;
+const CATS = [
+  { key: "credit", label: "신용 점수", fmt: (n) => `${won(n)}점` },
+  { key: "clicks", label: "누적 클릭 수", fmt: (n) => `${won(n)}번` },
+  { key: "donated", label: "누적 기부액", fmt: (n) => `${won(n)}원 상당` },
+];
+
+const ACCOUNT_KEY = "ahnireong-account"; // 이 기기에 저장되는 이어하기 코드
+const PLAYER_KEY = "ahnireong-player";   // 이 기기에 저장되는 내 데이터 사본
 /* =====================================================================
    화면 요소
    ===================================================================== */
@@ -77,7 +119,6 @@ const els = {
   percent: $("percent"),
   earnBtn: $("earnBtn"),
   donateBtn: $("donateBtn"),
-  resetBtn: $("resetBtn"),
   status: $("status"),
   sync: $("sync"),
   track: $("track"),
@@ -114,6 +155,15 @@ const els = {
   mapPlane: $("mapPlane"),
   mapWhere: $("mapWhere"),
   mapProgress: $("mapProgress"),
+  onlineCount: $("onlineCount"),
+  perkInfo: $("perkInfo"),
+  inappNote: $("inappNote"),
+  buildInfo: $("buildInfo"),
+  shopBtn: $("shopBtn"),
+  exchangeBtn: $("exchangeBtn"),
+  bankBtn: $("bankBtn"),
+  accountBtn: $("accountBtn"),
+  rankBtn: $("rankBtn"),
 };
 
 const reduceMotion =
@@ -122,9 +172,57 @@ const reduceMotion =
 /* =====================================================================
    상태
    ===================================================================== */
+// 플레이어(나)의 모든 데이터는 "계정"에 묶여 서버에 저장됩니다. 그래서 어느 기기·앱에서든 이어집니다.
+function defaultPlayer() {
+  return {
+    v: 1,
+    name: "",                                   // 랭킹 이름 (비어 있으면 미등록)
+    wallet: { krw: 0, inr: 0, usd: 0 },         // 지갑
+    mine: { krw: 0, inr: 0, usd: 0 },           // 내가 기부한 돈
+    clicks: 0,                                  // 누적 클릭 수
+    donatedKrw: 0,                              // 누적 기부액 (원 환산)
+    perm10: false,                              // 영구 ×10 보유
+    boostUntil: 0,                              // 100배 부스트가 끝나는 시각
+    bank: { krw: 0, inr: 0, usd: 0 },           // 은행 통장 잔액
+    bankAt: { krw: 0, inr: 0, usd: 0 },         // 이자를 마지막으로 합친 시각
+    loan: { krw: null, inr: null, usd: null },  // 대출 { owed, dueAt, accAt, lateApplied }
+    credit: BANK.startCredit,                   // 신용 점수
+    updatedAt: 0,
+  };
+}
 
-// 내 지갑과 내가 기부한 돈은 이 브라우저에 저장하고, 나머지는 서버(모두 공유)에서 가져옵니다.
-let me = { walletKrw: 0, walletInr: 0, walletUsd: 0, mineKrw: 0, mineInr: 0, mineUsd: 0 };
+// 서버나 저장소에서 읽은 값을 안전한 모양으로 다듬습니다.
+function normalizePlayer(raw) {
+  const d = defaultPlayer();
+  if (!raw || typeof raw !== "object") return d;
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) && n >= 0 ? n : 0; };
+  const trio = (o) => ({ krw: num(o && o.krw), inr: num(o && o.inr), usd: num(o && o.usd) });
+  d.name = typeof raw.name === "string" ? raw.name.slice(0, 12) : "";
+  d.wallet = trio(raw.wallet);
+  d.mine = trio(raw.mine);
+  d.clicks = Math.floor(num(raw.clicks));
+  d.donatedKrw = num(raw.donatedKrw);
+  d.perm10 = !!raw.perm10;
+  d.boostUntil = num(raw.boostUntil);
+  d.bank = trio(raw.bank);
+  d.bankAt = trio(raw.bankAt);
+  for (const k of ["krw", "inr", "usd"]) {
+    const l = raw.loan && raw.loan[k];
+    d.loan[k] = l && num(l.owed) > 0
+      ? { owed: num(l.owed), dueAt: num(l.dueAt), accAt: num(l.accAt), lateApplied: Math.floor(num(l.lateApplied)) }
+      : null;
+  }
+  const c = Number(raw.credit);
+  d.credit = Number.isFinite(c) ? Math.min(Math.max(Math.floor(c), 0), BANK.maxCredit) : BANK.startCredit;
+  d.updatedAt = num(raw.updatedAt);
+  return d;
+}
+
+let player = defaultPlayer();
+let accountCode = "";   // 비밀 이어하기 코드 (다른 사람에게 알려 주면 안 돼요)
+let publicId = "";      // 랭킹에 쓰는 공개용 번호 (코드를 해시한 값이라 코드를 알아낼 수 없어요)
+let playerDirty = false;
+let fb = null;          // 서버(Firebase) 연결 도구 모음
 let backend = null;
 let busy = false;
 
@@ -167,37 +265,71 @@ const getShared = () =>
 const islandShared = () =>
   Math.max(0, Math.min(nonNeg((donated.usd || {})["L" + leg]), ISLAND_GOAL));
 
-const walletOfKind = (k) => (k === "krw" ? me.walletKrw : k === "inr" ? me.walletInr : me.walletUsd);
-function addWalletKind(k, n) {
-  if (k === "krw") me.walletKrw += n;
-  else if (k === "inr") me.walletInr += n;
-  else me.walletUsd += n;
-}
-const mineOfKind = (k) => (k === "krw" ? me.mineKrw : k === "inr" ? me.mineInr : me.mineUsd);
-function addMineKind(k, n) {
-  if (k === "krw") me.mineKrw += n;
-  else if (k === "inr") me.mineInr += n;
-  else me.mineUsd += n;
-}
+// ---- 내 지갑 ----
+const walletOfKind = (k) => player.wallet[k];
+function addWalletKind(k, n) { player.wallet[k] = Math.max(0, player.wallet[k] + n); }
+const mineOfKind = (k) => player.mine[k];
+function addMineKind(k, n) { player.mine[k] = Math.max(0, player.mine[k] + n); }
 
-function loadMe() {
+// ---- 계정 코드 ----
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 헷갈리는 글자(I, O, 0, 1)는 뺌
+function newCode() {
+  const a = new Uint32Array(20);
+  crypto.getRandomValues(a);
+  let s = "";
+  for (const n of a) s += CODE_CHARS[n % CODE_CHARS.length];
+  return s;
+}
+const prettyCode = (c) => (c.match(/.{1,4}/g) || [c]).join("-");
+const cleanCode = (t) => String(t || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+const validCode = (c) => /^[A-HJ-NP-Z2-9]{20}$/.test(c);
+
+async function sha256Hex(text) {
   try {
-    const s = JSON.parse(localStorage.getItem(MY_KEY));
-    if (s) {
-      me = {
-        walletKrw: nonNeg(s.walletKrw !== undefined ? s.walletKrw : s.wallet), // 예전 저장값도 이어받음
-        walletInr: nonNeg(s.walletInr),
-        walletUsd: nonNeg(s.walletUsd),
-        mineKrw: nonNeg(s.mineKrw !== undefined ? s.mineKrw : s.mine),
-        mineInr: nonNeg(s.mineInr),
-        mineUsd: nonNeg(s.mineUsd),
-      };
-    }
-  } catch (e) { /* 저장소를 쓸 수 없으면 새로 시작 */ }
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) { // 아주 오래된 브라우저용 간단한 대체
+    let h = 5381;
+    for (const ch of text) h = ((h << 5) + h + ch.charCodeAt(0)) >>> 0;
+    return "x" + h.toString(16).padStart(8, "0") + String(text.length).padStart(4, "0");
+  }
 }
 
-function saveMe() {
-  try { localStorage.setItem(MY_KEY, JSON.stringify(me)); } catch (e) { /* 무시 */ }
+function loadAccountCode() {
+  try {
+    const c = localStorage.getItem(ACCOUNT_KEY);
+    if (c && validCode(c)) return c;
+  } catch (e) { /* 무시 */ }
+  return newCode();
+}
+
+// 이 기기에 저장해 둔 내 데이터 (서버에 연결되기 전에도 바로 보여 주기 위한 사본)
+function loadPlayerLocal() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PLAYER_KEY));
+    if (raw) return normalizePlayer(raw);
+  } catch (e) { /* 무시 */ }
+  try { // 예전 버전(지갑만 저장하던 때)의 기록 이어받기
+    const old = JSON.parse(localStorage.getItem("ahnireong-me"));
+    if (old) {
+      const p = defaultPlayer();
+      p.wallet.krw = nonNeg(old.walletKrw !== undefined ? old.walletKrw : old.wallet);
+      p.wallet.inr = nonNeg(old.walletInr);
+      p.wallet.usd = nonNeg(old.walletUsd);
+      p.mine.krw = nonNeg(old.mineKrw !== undefined ? old.mineKrw : old.mine);
+      p.mine.inr = nonNeg(old.mineInr);
+      p.mine.usd = nonNeg(old.mineUsd);
+      return p;
+    }
+  } catch (e) { /* 무시 */ }
+  return defaultPlayer();
+}
+
+// 내 데이터가 바뀔 때마다 부르면 이 기기에 바로 저장하고, 서버에는 잠시 뒤 모아서 보냅니다.
+function savePlayer() {
+  player.updatedAt = Date.now();
+  try { localStorage.setItem(PLAYER_KEY, JSON.stringify(player)); } catch (e) { /* 무시 */ }
+  playerDirty = true;
 }
 
 function setSync(text) {
@@ -283,6 +415,7 @@ function render() {
   els.ticket.classList.toggle("arrived", remaining === 0);
   els.ticket.classList.toggle("in-india", ctx.kind === "inr");
   els.ticket.classList.toggle("on-island", ctx.kind === "usd");
+  renderPerks();
 }
 
 function messageFor(phase) {
@@ -416,14 +549,14 @@ function renderFever() {
     els.feverFill.style.width = (left / FEVER_MS) * 100 + "%";
     els.feverText.textContent =
       `피버타임! 클릭 ×${won(ctx.mult)}배 (남은 시간 ${(left / 1000).toFixed(1)}초)`;
-    els.earnBtn.textContent = `${won(ctx.mult)}${ctx.unit} 벌기`;
+    els.earnBtn.textContent = `${won(clickValue(ctx, true))}${ctx.unit} 벌기`;
   } else {
     const shown = Math.min(fever.count + pending, FEVER_CLICKS);
     els.feverFill.style.width = (shown / FEVER_CLICKS) * 100 + "%";
     els.feverText.textContent = feverFailed
       ? `${shown} / ${FEVER_CLICKS}번 (서버에 저장되지 않고 있어요. Firebase 규칙을 확인해 주세요)`
       : `${shown} / ${FEVER_CLICKS}번 (안이령이 인도로 하루 빨리 가게 도와주는 버튼입니다.)`;
-    els.earnBtn.textContent = `1${ctx.unit} 벌기`;
+    els.earnBtn.textContent = `${won(clickValue(ctx, false))}${ctx.unit} 벌기`;
   }
 }
 
@@ -896,6 +1029,666 @@ function openMap() {
 }
 
 /* =====================================================================
+   상점 · 환전 · 은행 · 랭킹 · 계정
+   ===================================================================== */
+/* ---------- 공통 ---------- */
+
+const KINDS = ["krw", "inr", "usd"];
+// 받침 유무에 따라 조사를 붙이는 도우미 (원 → "원을", 루피 → "루피를")
+function hasBatchim(w) {
+  const c = w.charCodeAt(w.length - 1);
+  return c >= 0xac00 && c <= 0xd7a3 && (c - 0xac00) % 28 !== 0;
+}
+const eulReul = (w) => w + (hasBatchim(w) ? "을" : "를");
+const eunNeun = (w) => w + (hasBatchim(w) ? "은" : "는");
+const euroRo = (w) => {
+  const c = w.charCodeAt(w.length - 1);
+  return w + (hasBatchim(w) && (c - 0xac00) % 28 !== 8 ? "으로" : "로");
+};
+const fmt2 = (n) => n.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const toKrw = (kind, n) => (n * RATE[kind]) / RATE.krw; // 어떤 돈을 원으로 환산
+const fmtClock = (ms) => {
+  const s = Math.max(Math.ceil(ms / 1000), 0);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+function openDialog(d) {
+  if (typeof d.showModal === "function") d.showModal();
+  else d.setAttribute("open", "");
+}
+
+/* =====================================================================
+   상점 (부스트 · 영구 아이템)
+   ===================================================================== */
+
+const boostActive = () => serverNow() < player.boostUntil;
+
+// 클릭 한 번으로 벌리는 돈 = (피버타임 배수) × (영구 ×10) × (부스트 ×100)
+function clickValue(ctx, feverOn) {
+  return (
+    (feverOn ? ctx.mult : 1) *
+    (player.perm10 ? SHOP.permMult : 1) *
+    (boostActive() ? SHOP.boostMult : 1)
+  );
+}
+
+function renderPerks() {
+  const parts = [];
+  if (player.perm10) parts.push(`영구 ×${SHOP.permMult}`);
+  if (boostActive()) parts.push(`부스트 ×${SHOP.boostMult} (남은 시간 ${fmtClock(player.boostUntil - serverNow())})`);
+  els.perkInfo.textContent = parts.length ? "내 아이템: " + parts.join(" · ") : "";
+}
+
+function renderShop() {
+  $("shopWallet").textContent = won(player.wallet.krw);
+  $("boostState").textContent = boostActive()
+    ? `적용 중 · 남은 시간 ${fmtClock(player.boostUntil - serverNow())}`
+    : "사용 중이 아니에요";
+  $("permState").textContent = player.perm10 ? "보유 중 (영구 적용)" : "아직 없어요";
+  $("buyBoost").textContent = `${won(SHOP.boostPrice)}원 구매`;
+  $("buyPerm").textContent = player.perm10 ? "구매 완료" : `${won(SHOP.permPrice)}원 구매`;
+  $("buyPerm").disabled = player.perm10;
+}
+
+function buyBoost() {
+  const msg = $("shopMsg");
+  if (player.wallet.krw < SHOP.boostPrice) {
+    msg.textContent = `원이 모자라요. 지갑에 ${won(SHOP.boostPrice)}원이 있어야 해요.`;
+    return;
+  }
+  const extend = boostActive();
+  player.wallet.krw -= SHOP.boostPrice;
+  player.boostUntil = Math.max(player.boostUntil, serverNow()) + SHOP.boostMs;
+  savePlayer();
+  render();
+  renderShop();
+  msg.textContent = extend ? "부스트 시간이 5분 늘어났어요!" : `${SHOP.boostMult}배 부스트가 5분 동안 시작됐어요!`;
+}
+
+function buyPerm() {
+  const msg = $("shopMsg");
+  if (player.perm10) { msg.textContent = "이미 가지고 있어요."; return; }
+  if (player.wallet.krw < SHOP.permPrice) {
+    msg.textContent = `원이 모자라요. 지갑에 ${won(SHOP.permPrice)}원이 있어야 해요.`;
+    return;
+  }
+  player.wallet.krw -= SHOP.permPrice;
+  player.perm10 = true;
+  savePlayer();
+  render();
+  renderShop();
+  msg.textContent = `영구 ×${SHOP.permMult}를 샀어요! 이제부터 모든 클릭이 ${SHOP.permMult}배예요.`;
+}
+
+/* =====================================================================
+   환전
+   ===================================================================== */
+
+// from 돈 amount 를 to 돈으로 바꿀 때 받는 돈(out)과 실제로 쓰는 돈(spend)
+function exchangeQuote(from, to, amount) {
+  if (from === to || !(amount >= 1)) return null;
+  const out = Math.floor((amount * RATE[from]) / RATE[to]);
+  if (out < 1) return { out: 0, spend: 0 };
+  const spend = Math.ceil((out * RATE[to]) / RATE[from]); // 남는 잔돈은 쓰지 않고 지갑에 둠
+  return { out, spend };
+}
+
+function updateExPreview() {
+  const from = $("exFrom").value;
+  const to = $("exTo").value;
+  const amt = Math.floor(Number($("exAmount").value));
+  const p = $("exPreview");
+  if (from === to) { p.textContent = "서로 다른 돈을 골라 주세요."; return null; }
+  if (!(amt >= 1)) { p.textContent = ""; return null; }
+  const q = exchangeQuote(from, to, amt);
+  if (!q || q.out < 1) { p.textContent = "금액이 너무 적어서 바꿀 수 없어요."; return null; }
+  p.textContent =
+    `${won(q.spend)}${UNIT[from]} → ${won(q.out)}${UNIT[to]}` +
+    (q.spend < amt ? ` (남는 ${won(amt - q.spend)}${eunNeun(UNIT[from])} 지갑에 그대로 있어요)` : "");
+  return q;
+}
+
+function renderExchange() {
+  $("exWKrw").textContent = won(player.wallet.krw);
+  $("exWInr").textContent = won(player.wallet.inr);
+  $("exWUsd").textContent = won(player.wallet.usd);
+  updateExPreview();
+}
+
+function doExchange() {
+  const msg = $("exMsg");
+  const from = $("exFrom").value;
+  const to = $("exTo").value;
+  const q = updateExPreview();
+  if (!q) { msg.textContent = "금액과 돈의 종류를 다시 확인해 주세요."; return; }
+  if (q.spend > player.wallet[from]) {
+    msg.textContent = `지갑에 ${won(player.wallet[from])}${UNIT[from]}만 있어요.`;
+    return;
+  }
+  player.wallet[from] -= q.spend;
+  player.wallet[to] += q.out;
+  savePlayer();
+  render();
+  renderExchange();
+  msg.textContent = `${won(q.spend)}${eulReul(UNIT[from])} ${won(q.out)}${euroRo(UNIT[to])} 바꿨어요.`;
+}
+
+/* =====================================================================
+   은행 · 통장 · 대출 · 신용 점수
+   ===================================================================== */
+
+// 이자: 12시간에 4%. 흐르는 시간에 따라 조금씩 계속 불어납니다. (사이트를 나가 있는 동안에도 계산됨)
+const growth = (ms) => Math.pow(1 + BANK.rate, ms / BANK.periodMs);
+
+function bankBalance(k, now) {
+  return player.bank[k] > 0 && player.bankAt[k] > 0
+    ? player.bank[k] * growth(Math.max(now - player.bankAt[k], 0))
+    : player.bank[k];
+}
+
+function settleBank(k, now) { // 이자를 통장에 합치고 기준 시각을 지금으로
+  player.bank[k] = bankBalance(k, now);
+  player.bankAt[k] = now;
+}
+
+function loanOwed(k, now) {
+  const l = player.loan[k];
+  return l ? l.owed * growth(Math.max(now - l.accAt, 0)) : 0;
+}
+
+function settleLoan(k, now) {
+  const l = player.loan[k];
+  if (l) { l.owed = loanOwed(k, now); l.accAt = now; }
+}
+
+// 대출 가능 금액: (신용 점수 × 1,000원 상당 − 지금 갚아야 할 돈 합계)
+function loanAvailable(k, now) {
+  const limit = player.credit * BANK.limitPerPoint;
+  let owed = 0;
+  for (const b of KINDS) owed += toKrw(b, loanOwed(b, now));
+  return Math.max(Math.floor(((limit - owed) * RATE.krw) / RATE[k]), 0);
+}
+
+// 만기가 지났는데 못 갚았으면 12시간마다 신용 점수가 내려갑니다.
+function applyOverdue(now) {
+  let changed = false;
+  for (const k of KINDS) {
+    const l = player.loan[k];
+    if (!l || now < l.dueAt) continue;
+    const late = Math.floor((now - l.dueAt) / BANK.periodMs) + 1;
+    const delta = late - l.lateApplied;
+    if (delta > 0) {
+      player.credit = Math.max(0, player.credit - BANK.latePenalty * delta);
+      l.lateApplied = late;
+      changed = true;
+    }
+  }
+  if (changed) {
+    savePlayer();
+    if ($("bankDialog").open) $("bankMsg").textContent = "연체로 신용 점수가 내려갔어요. 빨리 갚아 주세요!";
+  }
+  return changed;
+}
+
+function creditLabel(c) {
+  return c >= 800 ? "우수" : c >= 600 ? "양호" : c >= 400 ? "보통" : c >= 200 ? "주의" : "위험";
+}
+
+function dueText(dueAt, now) {
+  const left = dueAt - now;
+  if (left <= 0) {
+    const late = -left;
+    return `연체 중 (${Math.floor(late / 3600000)}시간 ${Math.floor((late % 3600000) / 60000)}분 지남)`;
+  }
+  return `만기까지 ${Math.floor(left / 3600000)}시간 ${Math.floor((left % 3600000) / 60000)}분`;
+}
+
+function buildBankCards() {
+  const wrap = $("bankCards");
+  wrap.innerHTML = BANKS.map((b) => `
+    <section class="bank-card" data-bank="${b.key}">
+      <h3>${b.name} <small>(${b.unit})</small></h3>
+      <dl class="bank-nums">
+        <div><dt>내 지갑</dt><dd><span data-f="wallet">0</span>${b.unit}</dd></div>
+        <div><dt>통장 잔액</dt><dd><span data-f="balance">0</span>${b.unit}</dd></div>
+        <div><dt>갚을 대출금</dt><dd><span data-f="owed">0</span>${b.unit}</dd></div>
+      </dl>
+      <p class="bank-sub" data-f="loanInfo"></p>
+      <label class="bank-amt">금액
+        <input type="number" min="1" step="1" inputmode="numeric" data-f="amount" placeholder="비우면 가능한 전액">
+      </label>
+      <div class="bank-btns">
+        <button type="button" data-act="deposit">입금</button>
+        <button type="button" data-act="withdraw">출금</button>
+        <button type="button" data-act="borrow">대출</button>
+        <button type="button" data-act="repay">상환</button>
+      </div>
+    </section>`).join("");
+
+  wrap.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const card = btn.closest("[data-bank]");
+    bankAction(card.dataset.bank, btn.dataset.act, card);
+  });
+}
+
+function renderBank() {
+  const now = serverNow();
+  $("bankCredit").textContent = won(player.credit);
+  $("bankCreditLabel").textContent = creditLabel(player.credit);
+  $("bankLimit").textContent = won(player.credit * BANK.limitPerPoint);
+
+  for (const b of BANKS) {
+    const card = document.querySelector(`[data-bank="${b.key}"]`);
+    if (!card) continue;
+    const f = (name) => card.querySelector(`[data-f="${name}"]`);
+    f("wallet").textContent = won(player.wallet[b.key]);
+    f("balance").textContent = fmt2(bankBalance(b.key, now));
+    f("owed").textContent = fmt2(loanOwed(b.key, now));
+    const l = player.loan[b.key];
+    f("loanInfo").textContent = l
+      ? `대출 중 · ${dueText(l.dueAt, now)}`
+      : `대출 가능 최대 ${won(loanAvailable(b.key, now))}${b.unit}`;
+  }
+}
+
+function bankMsg(text) { $("bankMsg").textContent = text; }
+
+function bankAction(k, act, card) {
+  const now = serverNow();
+  const unit = UNIT[k];
+  const input = card.querySelector('[data-f="amount"]');
+  const raw = input.value.trim();
+  const typed = raw === "" ? null : Math.floor(Number(raw));
+  if (typed !== null && !(typed >= 1)) return bankMsg("금액은 1 이상의 숫자로 적어 주세요.");
+  applyOverdue(now);
+
+  if (act === "deposit") {
+    const amt = typed === null ? player.wallet[k] : typed;
+    if (amt < 1) return bankMsg("입금할 돈이 없어요.");
+    if (amt > player.wallet[k]) return bankMsg(`지갑에 ${won(player.wallet[k])}${unit}만 있어요.`);
+    settleBank(k, now);
+    player.wallet[k] -= amt;
+    player.bank[k] += amt;
+    bankMsg(`${won(amt)}${UNIT_OBJ[k]} 입금했어요.`);
+  } else if (act === "withdraw") {
+    settleBank(k, now);
+    const avail = Math.floor(player.bank[k]);
+    const amt = typed === null ? avail : typed;
+    if (amt < 1) return bankMsg("출금할 돈이 없어요.");
+    if (amt > avail) return bankMsg(`통장에는 ${won(avail)}${unit}까지 꺼낼 수 있어요.`);
+    player.bank[k] -= amt;
+    if (player.bank[k] < 0.005) player.bank[k] = 0;
+    player.wallet[k] += amt;
+    bankMsg(`${won(amt)}${UNIT_OBJ[k]} 출금했어요.`);
+  } else if (act === "borrow") {
+    if (player.loan[k]) return bankMsg("이미 대출이 있어요. 먼저 갚아 주세요.");
+    const avail = loanAvailable(k, now);
+    const amt = typed === null ? avail : typed;
+    if (amt < 1) return bankMsg("지금은 빌릴 수 있는 금액이 없어요. 신용 점수를 올리거나 다른 대출을 먼저 갚아 보세요.");
+    if (amt > avail) return bankMsg(`지금은 최대 ${won(avail)}${unit}까지 빌릴 수 있어요.`);
+    player.loan[k] = { owed: amt, dueAt: now + BANK.loanDueMs, accAt: now, lateApplied: 0 };
+    player.wallet[k] += amt;
+    bankMsg(`${won(amt)}${UNIT_OBJ[k]} 빌렸어요. 24시간 안에 갚으면 신용 점수가 올라요!`);
+  } else if (act === "repay") {
+    const l = player.loan[k];
+    if (!l) return bankMsg("갚을 대출이 없어요.");
+    settleLoan(k, now);
+    const due = Math.ceil(l.owed);
+    const amt = Math.min(typed === null ? Math.min(player.wallet[k], due) : typed, due);
+    if (amt < 1) return bankMsg("갚을 돈이 지갑에 없어요.");
+    if (amt > player.wallet[k]) return bankMsg(`지갑에 ${won(player.wallet[k])}${unit}만 있어요.`);
+    player.wallet[k] -= amt;
+    l.owed -= amt;
+    if (l.owed <= 0.005) {
+      const onTime = now <= l.dueAt;
+      player.loan[k] = null;
+      if (onTime) {
+        player.credit = Math.min(BANK.maxCredit, player.credit + BANK.repayBonus);
+        bankMsg(`대출을 모두 갚았어요! 신용 점수 +${BANK.repayBonus}`);
+      } else {
+        bankMsg("연체된 대출을 모두 갚았어요. (신용 점수는 오르지 않아요)");
+      }
+    } else {
+      bankMsg(`${won(amt)}${UNIT_OBJ[k]} 갚았어요. 남은 대출금은 ${fmt2(l.owed)}${unit}이에요.`);
+    }
+  }
+  input.value = "";
+  savePlayer();
+  render();
+  renderBank();
+}
+
+function bankTick() {
+  const now = serverNow();
+  applyOverdue(now);
+  if ($("bankDialog").open) renderBank();
+}
+
+/* =====================================================================
+   랭킹
+   ===================================================================== */
+
+let rankCat = "credit";
+let rankUnsub = null;
+let rankEntries = [];
+
+function myEntry() {
+  return {
+    name: player.name,
+    credit: Math.floor(player.credit),
+    clicks: Math.floor(player.clicks),
+    donated: Math.floor(player.donatedKrw),
+    updatedAt: Date.now(),
+  };
+}
+
+function renderRank() {
+  const cat = CATS.find((c) => c.key === rankCat);
+  document.querySelectorAll(".rank-tab").forEach((t) => {
+    t.classList.toggle("on", t.dataset.cat === rankCat);
+    t.setAttribute("aria-selected", t.dataset.cat === rankCat ? "true" : "false");
+  });
+  const list = $("rankList");
+  list.textContent = "";
+  if (!rankEntries.length) {
+    const li = document.createElement("li");
+    li.className = "rank-empty";
+    li.textContent = "아직 등록한 사람이 없어요. 첫 번째로 이름을 올려 보세요!";
+    list.appendChild(li);
+  }
+  rankEntries.forEach((e, i) => {
+    const li = document.createElement("li");
+    li.className = "rank-item" + (e.id === publicId ? " me" : "");
+    const no = document.createElement("span");
+    no.className = "rank-no";
+    no.textContent = String(i + 1);
+    const name = document.createElement("span");
+    name.className = "rank-name";
+    name.textContent = e.name; // 이름은 글자 그대로만 보여 줍니다
+    const val = document.createElement("span");
+    val.className = "rank-val";
+    val.textContent = cat.fmt(e.value);
+    li.append(no, name, val);
+    list.appendChild(li);
+  });
+  $("rankMine").textContent = player.name
+    ? `내 이름: ${player.name} (기록이 자동으로 올라가요)`
+    : "아직 랭킹에 등록하지 않았어요.";
+  $("rankName").value = $("rankName").value || player.name;
+  $("rankRemove").hidden = !player.name;
+  $("rankSave").textContent = player.name ? "이름 바꾸기" : "랭킹에 등록";
+}
+
+function unsubscribeRank() {
+  if (typeof rankUnsub === "function") rankUnsub();
+  rankUnsub = null;
+}
+
+function subscribeRank() {
+  unsubscribeRank();
+  if (!fb) { // 연습 모드: 내 기록만 보여 줍니다.
+    const mine = myEntry();
+    rankEntries = player.name ? [{ id: publicId, name: player.name, value: mine[rankCat] }] : [];
+    renderRank();
+    return;
+  }
+  const { dbMod, db } = fb;
+  const q = dbMod.query(dbMod.ref(db, "v2/ranking"), dbMod.orderByChild(rankCat), dbMod.limitToLast(RANK_LIMIT));
+  rankUnsub = dbMod.onValue(
+    q,
+    (snap) => {
+      const arr = [];
+      snap.forEach((child) => {
+        const v = child.val() || {};
+        arr.push({ id: child.key, name: String(v.name || "").slice(0, 12), value: Number(v[rankCat]) || 0 });
+      });
+      arr.sort((a, b) => b.value - a.value);
+      rankEntries = arr;
+      $("rankMsg").textContent = "";
+      renderRank();
+    },
+    (err) => {
+      console.error("랭킹 읽기 실패:", err);
+      $("rankMsg").textContent = "랭킹을 불러오지 못했어요. Firebase 규칙을 최신으로 바꿨는지 확인해 주세요.";
+    }
+  );
+}
+
+async function saveRankName(e) {
+  e.preventDefault();
+  const msg = $("rankMsg");
+  const name = $("rankName").value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 12);
+  if (name.length < 1) { msg.textContent = "이름을 1~12글자로 적어 주세요."; return; }
+  player.name = name;
+  savePlayer();
+  await syncNow(true);
+  if (!fb) subscribeRank();
+  renderRank();
+  msg.textContent = `"${name}" 이름으로 등록했어요. 신용 점수, 클릭 수, 기부액이 자동으로 올라가요.`;
+}
+
+async function removeRank() {
+  const msg = $("rankMsg");
+  player.name = "";
+  savePlayer();
+  if (fb && publicId) {
+    try { await fb.dbMod.remove(fb.dbMod.ref(fb.db, "v2/ranking/" + publicId)); } catch (e) { console.error(e); }
+  }
+  if (!fb) subscribeRank();
+  $("rankName").value = "";
+  renderRank();
+  msg.textContent = "랭킹에서 이름을 뺐어요.";
+}
+
+/* =====================================================================
+   계정 (이어하기 코드)
+   ===================================================================== */
+
+function renderAccount() {
+  $("accCode").textContent = prettyCode(accountCode);
+}
+
+async function copyCode() {
+  const msg = $("accMsg");
+  const text = prettyCode(accountCode);
+  try {
+    await navigator.clipboard.writeText(text);
+    msg.textContent = "코드를 복사했어요. 다른 기기나 앱에 붙여넣어 이어서 하세요.";
+  } catch (e) {
+    const range = document.createRange();
+    range.selectNodeContents($("accCode"));
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+    msg.textContent = "코드를 선택했어요. 길게 눌러서(또는 Ctrl + C로) 복사해 주세요.";
+  }
+}
+
+async function loadAccountByCode() {
+  const msg = $("accMsg");
+  const code = cleanCode($("accInput").value);
+  if (!validCode(code)) { msg.textContent = "코드 형식이 올바르지 않아요. 20자리 코드를 그대로 붙여넣어 주세요."; return; }
+  if (code === accountCode) { msg.textContent = "지금 쓰고 있는 코드예요."; return; }
+  if (!fb) { msg.textContent = "서버에 연결된 상태에서만 이어할 수 있어요."; return; }
+  msg.textContent = "불러오는 중…";
+  try {
+    await syncNow(true); // 지금 계정의 변경 사항은 먼저 저장
+    const snap = await fb.dbMod.get(fb.dbMod.ref(fb.db, "v2/players/" + code));
+    if (!snap.exists()) { msg.textContent = "그 코드로 저장된 데이터를 찾지 못했어요."; return; }
+    if (!window.confirm("이 기기의 데이터가 입력한 코드의 데이터로 바뀌어요. (지금 계정의 데이터는 서버에 그대로 남아 있어요.) 계속할까요?")) {
+      msg.textContent = "취소했어요.";
+      return;
+    }
+    accountCode = code;
+    try { localStorage.setItem(ACCOUNT_KEY, code); } catch (e) { /* 무시 */ }
+    publicId = (await sha256Hex(code)).slice(0, 24);
+    player = normalizePlayer(snap.val());
+    try { localStorage.setItem(PLAYER_KEY, JSON.stringify(player)); } catch (e) { /* 무시 */ }
+    playerDirty = false;
+    $("accInput").value = "";
+    renderAccount();
+    render();
+    renderFever();
+    renderPerks();
+    msg.textContent = "이어하기 완료! 이제 이 기기에서도 같은 데이터로 플레이해요.";
+  } catch (e) {
+    console.error(e);
+    msg.textContent = "불러오지 못했어요. 잠시 후 다시 시도해 주세요. [" + (e && e.message ? e.message : e) + "]";
+  }
+}
+
+/* =====================================================================
+   서버 연결 후 할 일: 접속자 수, 내 데이터 맞추기, 저장
+   ===================================================================== */
+
+let accountReady = false;
+let syncing = false;
+let syncStarted = false;
+let playerSyncState = "연결 중…";
+
+function renderBuildInfo() {
+  els.buildInfo.textContent =
+    `사이트 버전 ${VERSION} · 서버 ${firebaseConfig && firebaseConfig.projectId ? firebaseConfig.projectId : "(미설정)"} · 내 데이터: ${playerSyncState}`;
+}
+
+function localExtras() {
+  els.onlineCount.textContent = "1";
+  accountReady = true;
+  playerSyncState = "연습 모드 (이 기기에만 저장)";
+  renderBuildInfo();
+}
+
+// 내 데이터를 서버에 저장합니다. 값이 바뀌었을 때만 보냅니다.
+async function syncNow(force) {
+  if (!fb || !accountReady || syncing) return;
+  if (!playerDirty && !force) return;
+  syncing = true;
+  playerDirty = false;
+  try {
+    const { dbMod, db } = fb;
+    await dbMod.set(dbMod.ref(db, "v2/players/" + accountCode), JSON.parse(JSON.stringify(player)));
+    if (player.name && publicId) {
+      await dbMod.set(dbMod.ref(db, "v2/ranking/" + publicId), myEntry());
+    }
+    playerSyncState = "서버에 저장됨";
+  } catch (e) {
+    console.error("내 데이터 저장 실패:", e);
+    playerDirty = true;
+    playerSyncState = "서버 저장 실패 [" + (e && e.message ? e.message : e) + "]";
+  }
+  syncing = false;
+  renderBuildInfo();
+}
+
+async function connectExtras() {
+  const { dbMod, db } = fb;
+
+  // 실시간 접속자 수: 접속하면 내 이름표를 올리고, 나가면 서버가 알아서 지웁니다.
+  const cid = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const presRef = dbMod.ref(db, "v2/presence/" + cid);
+  dbMod.onValue(dbMod.ref(db, ".info/connected"), (snap) => {
+    if (snap.val() === true) {
+      dbMod.onDisconnect(presRef).remove();
+      dbMod.set(presRef, Date.now()).catch((e) => console.error("접속 표시 실패:", e));
+    }
+  });
+  dbMod.onValue(
+    dbMod.ref(db, "v2/presence"),
+    (snap) => {
+      const n = typeof snap.size === "number" ? snap.size : snap.numChildren();
+      els.onlineCount.textContent = String(Math.max(n, 1));
+    },
+    (err) => console.error("접속자 수 읽기 실패:", err)
+  );
+
+  // 이 계정의 서버 데이터와 맞추기
+  try {
+    const snap = await dbMod.get(dbMod.ref(db, "v2/players/" + accountCode));
+    const remote = snap.exists() ? normalizePlayer(snap.val()) : null;
+    if (remote && remote.updatedAt > player.updatedAt) {
+      player = remote; // 서버가 더 최신이면 서버 데이터를 씀 (다른 기기·앱에서 이어하기)
+      try { localStorage.setItem(PLAYER_KEY, JSON.stringify(player)); } catch (e) { /* 무시 */ }
+      render();
+      renderFever();
+    } else {
+      playerDirty = true; // 서버에 없거나 이 기기 쪽이 더 최신
+    }
+    accountReady = true;
+    playerSyncState = "서버에 저장됨";
+  } catch (e) {
+    console.error("내 데이터 불러오기 실패:", e);
+    playerSyncState = "서버 연결 실패 [" + (e && e.message ? e.message : e) + "] (Firebase 규칙을 최신으로 바꿨는지 확인해 주세요)";
+  }
+  renderBuildInfo();
+
+  if (!syncStarted) {
+    syncStarted = true;
+    setInterval(() => syncNow(false), 2500);
+    document.addEventListener("visibilitychange", () => { if (document.hidden) syncNow(false); });
+    window.addEventListener("pagehide", () => syncNow(false));
+  }
+}
+
+/* =====================================================================
+   화면 연결
+   ===================================================================== */
+
+function wireUi() {
+  // 메뉴 버튼
+  els.shopBtn.addEventListener("click", () => { $("shopMsg").textContent = ""; renderShop(); openDialog($("shopDialog")); });
+  els.exchangeBtn.addEventListener("click", () => { $("exMsg").textContent = ""; renderExchange(); openDialog($("exchangeDialog")); });
+  els.bankBtn.addEventListener("click", () => { bankMsg(""); renderBank(); openDialog($("bankDialog")); });
+  els.accountBtn.addEventListener("click", () => { $("accMsg").textContent = ""; renderAccount(); openDialog($("accountDialog")); });
+  els.rankBtn.addEventListener("click", () => { $("rankMsg").textContent = ""; openDialog($("rankDialog")); subscribeRank(); renderRank(); });
+
+  // 닫기: "닫기" 버튼이나 바깥(어두운 부분) 클릭
+  document.querySelectorAll("dialog.modal").forEach((d) => {
+    d.addEventListener("click", (e) => {
+      if (e.target === d || e.target.closest("[data-close]")) d.close();
+    });
+  });
+  $("rankDialog").addEventListener("close", unsubscribeRank);
+
+  // 상점
+  $("buyBoost").addEventListener("click", buyBoost);
+  $("buyPerm").addEventListener("click", buyPerm);
+
+  // 환전
+  $("exFrom").addEventListener("change", updateExPreview);
+  $("exTo").addEventListener("change", updateExPreview);
+  $("exAmount").addEventListener("input", updateExPreview);
+  $("exAll").addEventListener("click", () => { $("exAmount").value = player.wallet[$("exFrom").value] || ""; updateExPreview(); });
+  $("exSwap").addEventListener("click", () => {
+    const a = $("exFrom").value;
+    $("exFrom").value = $("exTo").value;
+    $("exTo").value = a;
+    updateExPreview();
+  });
+  $("exDo").addEventListener("click", doExchange);
+
+  // 은행
+  buildBankCards();
+
+  // 랭킹
+  document.querySelectorAll(".rank-tab").forEach((t) => {
+    t.addEventListener("click", () => { rankCat = t.dataset.cat; subscribeRank(); renderRank(); });
+  });
+  $("rankForm").addEventListener("submit", saveRankName);
+  $("rankRemove").addEventListener("click", removeRank);
+
+  // 계정
+  $("accCopy").addEventListener("click", copyCode);
+  $("accLoad").addEventListener("click", loadAccountByCode);
+
+  // 인스타·카톡 같은 앱 안의 브라우저에서는 저장 공간이 따로라서 안내를 보여 줍니다.
+  if (/KAKAOTALK|Instagram|FBAN|FBAV|NAVER\(inapp|DaumApps|Line\//i.test(navigator.userAgent || "")) {
+    els.inappNote.hidden = false;
+  }
+}
+
+/* =====================================================================
    저장소(백엔드)
    ===================================================================== */
 
@@ -981,6 +1774,7 @@ function setupLocalBackend(message) {
   setSync(message);
   render();
   renderFever();
+  localExtras();
 }
 
 async function initBackend() {
@@ -1103,6 +1897,8 @@ async function initBackend() {
         await dbMod.runTransaction(feverRef, (cur) => applyClicks(cur, n, serverNow()));
       },
     };
+    fb = { dbMod, db };
+    await connectExtras();
   } catch (e) {
     setSync("공유 서버를 불러오지 못했어요. 인터넷 연결을 확인해 주세요. [" + (e && e.message ? e.message : String(e)) + "]");
   }
@@ -1111,7 +1907,6 @@ async function initBackend() {
 /* =====================================================================
    버튼
    ===================================================================== */
-
 function earn(e) {
   if (guardOpen) return;
 
@@ -1122,10 +1917,10 @@ function earn(e) {
   }
 
   const ctx = ctxOf(journeyState());
-  if (isFever()) {
-    addWalletKind(ctx.kind, ctx.mult);
-  } else {
-    addWalletKind(ctx.kind, 1);
+  const feverOn = isFever();
+  addWalletKind(ctx.kind, clickValue(ctx, feverOn)); // (피버타임) × (영구 ×10) × (부스트 ×100)
+  player.clicks += 1;
+  if (!feverOn) {
     els.status.textContent = "";
     pending = Math.min(pending + 1, FEVER_CLICKS);
     if (fever.count + pending >= FEVER_CLICKS) {
@@ -1137,7 +1932,7 @@ function earn(e) {
       scheduleFlush();
     }
   }
-  saveMe();
+  savePlayer();
   render();
   renderFever();
 }
@@ -1160,7 +1955,8 @@ async function donate() {
     const added = await backend.add(kind, L, amount);
     addWalletKind(kind, -added);
     addMineKind(kind, added);
-    saveMe();
+    player.donatedKrw += toKrw(kind, added); // 누적 기부액은 원으로 환산해서 모읍니다.
+    savePlayer();
     els.status.textContent =
       added > 0
         ? `${won(added)}${UNIT_OBJ[kind]} 안이령에게 기부했어요. 고마워요!`
@@ -1173,20 +1969,8 @@ async function donate() {
   }
 }
 
-function resetMine() {
-  const ok = window.confirm(
-    "내 지갑과 내 기부 기록(원·루피·달러)만 지워져요. 다 같이 모은 돈은 그대로 남아요. 계속할까요?"
-  );
-  if (!ok) return;
-  me = { walletKrw: 0, walletInr: 0, walletUsd: 0, mineKrw: 0, mineInr: 0, mineUsd: 0 };
-  els.status.textContent = "";
-  saveMe();
-  render();
-}
-
 els.earnBtn.addEventListener("click", earn);
 els.donateBtn.addEventListener("click", donate);
-els.resetBtn.addEventListener("click", resetMine);
 els.guardBtn.addEventListener("click", onGuardConfirm);
 els.mapBtn.addEventListener("click", openMap);
 els.mapClose.addEventListener("click", () => els.mapDialog.close());
@@ -1197,15 +1981,24 @@ els.mapDialog.addEventListener("click", (e) => {
 // 사진 2를 미리 내려받아 두어 바뀔 때 깜빡이지 않게 합니다.
 new Image().src = PHOTO2;
 
-loadMe();
+// 계정과 내 데이터 준비 (이 기기에 저장된 코드가 없으면 새로 만듭니다)
+accountCode = loadAccountCode();
+try { localStorage.setItem(ACCOUNT_KEY, accountCode); } catch (e) { /* 무시 */ }
+player = loadPlayerLocal();
+sha256Hex(accountCode).then((h) => { publicId = h.slice(0, 24); });
+
+wireUi();
 loadGuard();
 render();
 renderFever();
 renderJourney();
 renderGuardInfo();
+renderBuildInfo();
 if (guard.flyUntil > Date.now()) startFlying(); // 새로고침해도 벌칙은 이어집니다.
 requestAnimationFrame(journeyLoop);
 setInterval(renderFever, 100);
 setInterval(renderGuard, 50);
 setInterval(renderGuardInfo, 500);
+setInterval(renderPerks, 500);
+setInterval(bankTick, 1000);
 initBackend();
