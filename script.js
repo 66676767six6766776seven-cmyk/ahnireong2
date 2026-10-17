@@ -188,6 +188,7 @@ function defaultPlayer() {
     bankAt: { krw: 0, inr: 0, usd: 0 },         // 이자를 마지막으로 합친 시각
     loan: { krw: null, inr: null, usd: null },  // 대출 { owed, dueAt, accAt, lateApplied }
     credit: BANK.startCredit,                   // 신용 점수
+    moneyResetSeen: 0,                          // 마지막으로 반영한 "돈 초기화" 번호
     updatedAt: 0,
   };
 }
@@ -215,6 +216,7 @@ function normalizePlayer(raw) {
   }
   const c = Number(raw.credit);
   d.credit = Number.isFinite(c) ? Math.min(Math.max(Math.floor(c), 0), BANK.maxCredit) : BANK.startCredit;
+  d.moneyResetSeen = Math.floor(num(raw.moneyResetSeen));
   d.updatedAt = num(raw.updatedAt);
   return d;
 }
@@ -1550,6 +1552,7 @@ async function loadAccountByCode() {
     player = normalizePlayer(snap.val());
     try { localStorage.setItem(PLAYER_KEY, JSON.stringify(player)); } catch (e) { /* 무시 */ }
     playerDirty = false;
+    applyMoneyReset();
     $("accInput").value = "";
     renderAccount();
     render();
@@ -1565,6 +1568,29 @@ async function loadAccountByCode() {
 /* =====================================================================
    서버 연결 후 할 일: 접속자 수, 내 데이터 맞추기, 저장
    ===================================================================== */
+
+// 모두의 돈 초기화: 서버의 v2/moneyReset 숫자가 내가 마지막으로 반영한 번호보다 커지면
+// 지갑(원·루피·달러), 은행 통장, 대출을 0으로 만듭니다. (아이템·신용 점수·클릭 수·기부 기록·랭킹 이름은 그대로)
+let moneyResetVersion = 0;
+function applyMoneyReset() {
+  if (player.moneyResetSeen >= moneyResetVersion) return false;
+  const hadMoney = KINDS.some((k) => player.wallet[k] > 0 || player.bank[k] > 0 || player.loan[k]);
+  for (const k of KINDS) {
+    player.wallet[k] = 0;
+    player.bank[k] = 0;
+    player.bankAt[k] = 0;
+    player.loan[k] = null;
+  }
+  player.moneyResetSeen = moneyResetVersion;
+  savePlayer();
+  render();
+  renderFever();
+  if ($("bankDialog").open) renderBank();
+  if ($("shopDialog").open) renderShop();
+  if ($("exchangeDialog").open) renderExchange();
+  if (hadMoney) els.status.textContent = "모든 사람의 돈이 0원으로 초기화됐어요. (지갑·통장·대출)";
+  return true;
+}
 
 let accountReady = false;
 let syncing = false;
@@ -1626,6 +1652,13 @@ async function connectExtras() {
     (err) => console.error("접속자 수 읽기 실패:", err)
   );
 
+  // 돈 초기화 신호 (접속 중이면 바로, 나중에 접속해도 접속할 때 반영)
+  dbMod.onValue(
+    dbMod.ref(db, "v2/moneyReset"),
+    (snap) => { moneyResetVersion = nonNeg(snap.val()); applyMoneyReset(); },
+    (err) => console.error("돈 초기화 신호 읽기 실패:", err)
+  );
+
   // 이 계정의 서버 데이터와 맞추기
   try {
     const snap = await dbMod.get(dbMod.ref(db, "v2/players/" + accountCode));
@@ -1638,6 +1671,7 @@ async function connectExtras() {
     } else {
       playerDirty = true; // 서버에 없거나 이 기기 쪽이 더 최신
     }
+    applyMoneyReset(); // 서버 데이터로 바뀌었을 수 있으니 한 번 더 확인
     accountReady = true;
     playerSyncState = "서버에 저장됨";
   } catch (e) {
