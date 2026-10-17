@@ -8,17 +8,22 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css?v=7">
 </head>
 <body>
   <main class="ticket">
     <header class="ticket-head">
       <div class="head-row">
         <h1>안이령에게 모금해주세요</h1>
-        <button type="button" class="map-btn" id="mapBtn">지도</button>
+        <div class="head-buttons">
+          <button type="button" class="map-btn" id="mapBtn">지도</button>
+          <button type="button" class="map-btn" id="rankBtn">랭킹</button>
+        </div>
       </div>
       <p class="lead">버튼을 눌러 돈을 모으고 안이령에게 기부하세요. 한국에서는 원으로 인도행 비행기 값을, 인도에서는 루피로 한국행 비행기 값을 모읍니다. 접속한 모든 사람의 기부가 한 곳에 합쳐집니다.</p>
     </header>
+
+    <p class="inapp-note" id="inappNote" hidden>인스타그램·카카오톡 같은 앱 안에서 열면 저장 공간이 따로라서 데이터가 달라 보일 수 있어요. 오른쪽 메뉴의 <strong>계정</strong>에서 이어하기 코드를 확인하고, 다른 곳에서 그 코드를 입력하면 같은 데이터로 이어서 할 수 있어요.</p>
 
     <section class="fever" id="fever" aria-label="피버타임">
       <div class="fever-top">
@@ -26,6 +31,7 @@
         <span class="fever-text" id="feverText">0 / 300번 (안이령이 인도로 하루 빨리 가게 도와주는 버튼입니다.)</span>
       </div>
       <div class="fever-bar"><div class="fever-fill" id="feverFill"></div></div>
+      <p class="online">현재 접속자 <strong id="onlineCount">1</strong>명</p>
     </section>
 
     <section class="route" aria-label="모금 진행 상황">
@@ -80,6 +86,7 @@
       <button type="button" class="btn donate" id="donateBtn" disabled>지갑의 돈 전부 기부하기</button>
     </section>
 
+    <p class="perk-info" id="perkInfo" role="status"></p>
     <p class="guard-info" id="guardInfo" role="status"></p>
     <p class="status" id="status" role="status"></p>
 
@@ -89,11 +96,19 @@
         <p class="note">한국 구간: 2026년 10월 14일 기준, 인천에서 뉴델리까지 가는 중급 항공사(에어인디아 직항) 편도 요금을 약 387,000원으로 잡았어요. 출발지는 충남 홍성군 내포신도시로 했지만 홍성에는 공항이 없어서 요금은 인천공항 출발 기준 그대로 썼습니다.</p>
         <p class="note">인도 구간: 2026년 10월 15일 기준, 뉴델리에서 인천까지 가는 최고급 항공사(대한항공 직항) 편도 요금을 약 52,400루피로 잡았어요. 여러 항공권 사이트에 보이는 약 51,500~53,000루피대 가격을 반올림한 값입니다.</p>
         <p class="note">무인도: 비행 중에 가끔 비행기가 추락해 무인도에 갇힐 수 있어요. 이때는 달러로 1달러씩 1,000,000달러를 모으면 탈출해서 원래 가던 곳으로 다시 출발합니다. 피버타임은 무인도에서만 클릭당 500배예요.</p>
+        <p class="note">환율: 1원 = 15루피, 1달러 = 1,500원. 은행 이자는 통장과 대출 모두 12시간에 4%예요. 내 데이터(지갑·통장·대출·신용 점수·아이템)는 계정에 묶여 서버에 저장돼요.</p>
         <p class="note">항공권 가격은 날마다 바뀌므로 정확한 요금이 아닙니다. 이 사이트의 돈은 모두 가상의 돈이며 실제 결제나 송금은 일어나지 않습니다.</p>
       </div>
-      <button type="button" class="reset" id="resetBtn">내 기록 지우기</button>
+      <p class="build-info" id="buildInfo"></p>
     </footer>
   </main>
+
+  <nav class="dock" aria-label="메뉴">
+    <button type="button" id="shopBtn">상점</button>
+    <button type="button" id="exchangeBtn">환전</button>
+    <button type="button" id="bankBtn">은행</button>
+    <button type="button" id="accountBtn">계정</button>
+  </nav>
 
   <!-- 자동 클릭 경고 -->
   <div class="guard" id="guard" hidden role="alertdialog" aria-modal="true" aria-labelledby="guardTitle">
@@ -160,6 +175,104 @@
     </div>
   </dialog>
 
-  <script type="module" src="script.js"></script>
+  <!-- 상점 -->
+  <dialog class="modal" id="shopDialog" aria-labelledby="shopTitle">
+    <div class="modal-inner">
+      <div class="modal-head"><h2 id="shopTitle">상점</h2><button type="button" class="modal-close" data-close>닫기</button></div>
+      <p class="modal-sub">내 원 지갑: <strong id="shopWallet">0</strong>원</p>
+      <ul class="shop-list">
+        <li class="shop-item">
+          <div>
+            <strong>100배 부스트 (5분)</strong>
+            <p>5분 동안 내 클릭이 ×100이 돼요. 쓰는 도중에 또 사면 5분이 더 늘어나요.</p>
+            <p class="shop-state" id="boostState"></p>
+          </div>
+          <button type="button" class="buy-btn" id="buyBoost">1,000원 구매</button>
+        </li>
+        <li class="shop-item">
+          <div>
+            <strong>영구 ×10</strong>
+            <p>평생 내 모든 클릭이 ×10이 돼요. 한 번만 살 수 있어요.</p>
+            <p class="shop-state" id="permState"></p>
+          </div>
+          <button type="button" class="buy-btn" id="buyPerm">100,000원 구매</button>
+        </li>
+      </ul>
+      <p class="modal-note">아이템 효과는 서로 곱해져요. 피버타임 ×100 · 영구 ×10 · 부스트 ×100이 모두 적용될 수 있어요.</p>
+      <p class="modal-msg" id="shopMsg" role="status"></p>
+    </div>
+  </dialog>
+
+  <!-- 환전 -->
+  <dialog class="modal" id="exchangeDialog" aria-labelledby="exTitle">
+    <div class="modal-inner">
+      <div class="modal-head"><h2 id="exTitle">환전</h2><button type="button" class="modal-close" data-close>닫기</button></div>
+      <p class="modal-sub">환율: <strong>1원 = 15루피</strong> · <strong>1달러 = 1,500원</strong></p>
+      <p class="wallets">내 지갑: 원 <strong id="exWKrw">0</strong> · 루피 <strong id="exWInr">0</strong> · 달러 <strong id="exWUsd">0</strong></p>
+      <div class="ex-row">
+        <label>바꿀 돈
+          <select id="exFrom"><option value="krw">원</option><option value="inr">루피</option><option value="usd">달러</option></select>
+        </label>
+        <button type="button" class="ex-swap" id="exSwap" aria-label="바꿀 돈과 받을 돈 서로 바꾸기">⇄</button>
+        <label>받을 돈
+          <select id="exTo"><option value="inr" selected>루피</option><option value="krw">원</option><option value="usd">달러</option></select>
+        </label>
+      </div>
+      <div class="ex-amount">
+        <label>금액 <input type="number" id="exAmount" min="1" step="1" inputmode="numeric" placeholder="바꿀 금액"></label>
+        <button type="button" class="reset" id="exAll">전부</button>
+      </div>
+      <p class="ex-preview" id="exPreview"></p>
+      <button type="button" class="buy-btn wide" id="exDo">환전하기</button>
+      <p class="modal-msg" id="exMsg" role="status"></p>
+    </div>
+  </dialog>
+
+  <!-- 은행 -->
+  <dialog class="modal modal-wide" id="bankDialog" aria-labelledby="bankTitle">
+    <div class="modal-inner">
+      <div class="modal-head"><h2 id="bankTitle">은행</h2><button type="button" class="modal-close" data-close>닫기</button></div>
+      <p class="modal-sub">내 신용 점수 <strong id="bankCredit">500</strong>점 (<span id="bankCreditLabel">보통</span>) · 대출 한도 <strong id="bankLimit">0</strong>원 상당</p>
+      <p class="modal-note">이자는 통장과 대출 모두 12시간에 4%예요. 사이트를 나가 있는 동안에도 계속 붙어요. 대출은 24시간 안에 갚으면 신용 점수가 +20, 못 갚으면 12시간마다 −40이에요.</p>
+      <div class="bank-cards" id="bankCards"></div>
+      <p class="modal-msg" id="bankMsg" role="status"></p>
+    </div>
+  </dialog>
+
+  <!-- 랭킹 -->
+  <dialog class="modal modal-wide" id="rankDialog" aria-labelledby="rankTitle">
+    <div class="modal-inner">
+      <div class="modal-head"><h2 id="rankTitle">랭킹</h2><button type="button" class="modal-close" data-close>닫기</button></div>
+      <div class="rank-tabs" role="tablist">
+        <button type="button" class="rank-tab on" role="tab" data-cat="credit">신용 점수</button>
+        <button type="button" class="rank-tab" role="tab" data-cat="clicks">누적 클릭 수</button>
+        <button type="button" class="rank-tab" role="tab" data-cat="donated">누적 기부액</button>
+      </div>
+      <ol class="rank-list" id="rankList"></ol>
+      <p class="modal-sub" id="rankMine"></p>
+      <form class="rank-form" id="rankForm">
+        <label>랭킹에 올릴 이름 <input type="text" id="rankName" maxlength="12" autocomplete="off" placeholder="1~12글자"></label>
+        <button type="submit" class="buy-btn" id="rankSave">랭킹에 등록</button>
+        <button type="button" class="reset" id="rankRemove" hidden>랭킹에서 빼기</button>
+      </form>
+      <p class="modal-msg" id="rankMsg" role="status"></p>
+    </div>
+  </dialog>
+
+  <!-- 계정 (이어하기) -->
+  <dialog class="modal" id="accountDialog" aria-labelledby="accTitle">
+    <div class="modal-inner">
+      <div class="modal-head"><h2 id="accTitle">내 계정 (이어하기)</h2><button type="button" class="modal-close" data-close>닫기</button></div>
+      <p class="modal-sub">아래 코드를 다른 기기나 앱(인스타·카톡·크롬 등)에 입력하면 같은 데이터로 이어서 할 수 있어요. <strong>코드는 비밀번호와 같아요. 남에게 알려 주지 마세요.</strong></p>
+      <div class="code-row"><code id="accCode"></code><button type="button" class="buy-btn" id="accCopy">복사</button></div>
+      <label class="acc-label">다른 코드로 이어하기
+        <input type="text" id="accInput" autocomplete="off" spellcheck="false" placeholder="코드를 붙여넣기">
+      </label>
+      <button type="button" class="buy-btn wide" id="accLoad">불러오기</button>
+      <p class="modal-msg" id="accMsg" role="status"></p>
+    </div>
+  </dialog>
+
+  <script type="module" src="script.js?v=7"></script>
 </body>
 </html>
