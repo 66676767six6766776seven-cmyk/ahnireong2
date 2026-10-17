@@ -58,6 +58,10 @@
           ".validate": false
         }
       },
+      "moneyReset": {
+        ".read": true,
+        ".validate": "newData.isNumber() && newData.val() >= 0"
+      },
       "presence": {
         ".read": true,
         "$cid": {
@@ -67,7 +71,11 @@
       },
       "ranking": {
         ".read": true,
-        ".indexOn": ["credit", "clicks", "donated"],
+        ".indexOn": [
+          "credit",
+          "clicks",
+          "donated"
+        ],
         "$pid": {
           ".write": true,
           ".validate": "newData.hasChildren(['name', 'credit', 'clicks', 'donated', 'updatedAt'])",
