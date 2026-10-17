@@ -72,16 +72,17 @@ const RATE = { inr: 1, krw: 15, usd: 22500 };
 
 // 상점 (가격은 모두 원)
 const SHOP = {
-  boostPrice: 1000,           // 100배 부스트 5분
-  boostMult: 100,
+  boostPrice: 1000,           // 5배 부스트 5분
+  boostMult: 5,
   boostMs: 5 * 60 * 1000,
-  permPrice: 100000,          // 영구 ×10
+  permPrice: 1000000,         // 영구 ×10
+  meetPrice: 100000000,       // 안이령과 만나기 (아직 준비중이라 살 수는 없어요)
   permMult: 10,
 };
 
 // 은행
 const BANK = {
-  rate: 0.0001,                           // 이자: 12시간에 0.001% (통장과 대출 모두)
+  rate: 0.04,                           // 이자: 12시간에 4% (통장과 대출 모두)
   periodMs: 12 * 60 * 60 * 1000,
   loanDueMs: 24 * 60 * 60 * 1000,       // 대출 만기: 빌린 뒤 24시간
   startCredit: 500,                     // 처음 신용 점수
@@ -182,7 +183,7 @@ function defaultPlayer() {
     clicks: 0,                                  // 누적 클릭 수
     donatedKrw: 0,                              // 누적 기부액 (원 환산)
     perm10: false,                              // 영구 ×10 보유
-    boostUntil: 0,                              // 100배 부스트가 끝나는 시각
+    boostUntil: 0,                              // 5배 부스트가 끝나는 시각
     bank: { krw: 0, inr: 0, usd: 0 },           // 은행 통장 잔액
     bankAt: { krw: 0, inr: 0, usd: 0 },         // 이자를 마지막으로 합친 시각
     loan: { krw: null, inr: null, usd: null },  // 대출 { owed, dueAt, accAt, lateApplied }
@@ -1045,6 +1046,24 @@ const euroRo = (w) => {
   const c = w.charCodeAt(w.length - 1);
   return w + (hasBatchim(w) && (c - 0xac00) % 28 !== 8 ? "으로" : "로");
 };
+// 금액 입력칸에 숫자만 받고 1,000단위 쉼표를 자동으로 넣어 줍니다. (커서 위치는 유지)
+function formatAmountInput(input) {
+  const raw = input.value;
+  const caret = input.selectionStart === null ? raw.length : input.selectionStart;
+  const digitsBefore = raw.slice(0, caret).replace(/\D/g, "").length;
+  let digits = raw.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 15);
+  const formatted = digits ? Number(digits).toLocaleString("ko-KR") : "";
+  input.value = formatted;
+  let pos = 0, seen = 0;
+  while (pos < formatted.length && seen < digitsBefore) {
+    if (/\d/.test(formatted[pos])) seen++;
+    pos++;
+  }
+  try { input.setSelectionRange(pos, pos); } catch (e) { /* 무시 */ }
+}
+// 쉼표가 들어간 글자에서 숫자만 읽기 (비어 있으면 0)
+const parseAmount = (text) => Number(String(text || "").replace(/\D/g, "")) || 0;
+
 const fmt2 = (n) => n.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const toKrw = (kind, n) => (n * RATE[kind]) / RATE.krw; // 어떤 돈을 원으로 환산
 const fmtClock = (ms) => {
@@ -1063,7 +1082,7 @@ function openDialog(d) {
 
 const boostActive = () => serverNow() < player.boostUntil;
 
-// 클릭 한 번으로 벌리는 돈 = (피버타임 배수) × (영구 ×10) × (부스트 ×100)
+// 클릭 한 번으로 벌리는 돈 = (피버타임 배수) × (영구 ×10) × (부스트 ×5)
 function clickValue(ctx, feverOn) {
   return (
     (feverOn ? ctx.mult : 1) *
@@ -1086,6 +1105,7 @@ function renderShop() {
     : "사용 중이 아니에요";
   $("permState").textContent = player.perm10 ? "보유 중 (영구 적용)" : "아직 없어요";
   $("buyBoost").textContent = `${won(SHOP.boostPrice)}원 구매`;
+  $("meetBtn").textContent = `${won(SHOP.meetPrice)}원 구매`;
   $("buyPerm").textContent = player.perm10 ? "구매 완료" : `${won(SHOP.permPrice)}원 구매`;
   $("buyPerm").disabled = player.perm10;
 }
@@ -1117,7 +1137,7 @@ function buyPerm() {
   savePlayer();
   render();
   renderShop();
-  msg.textContent = `영구 ×${SHOP.permMult}를 샀어요! 이제부터 모든 클릭이 ${SHOP.permMult}배예요.`;
+  msg.textContent = `영구 ×${SHOP.permMult} 아이템을 샀어요! 이제부터 모든 클릭이 ${SHOP.permMult}배예요.`;
 }
 
 /* =====================================================================
@@ -1136,7 +1156,7 @@ function exchangeQuote(from, to, amount) {
 function updateExPreview() {
   const from = $("exFrom").value;
   const to = $("exTo").value;
-  const amt = Math.floor(Number($("exAmount").value));
+  const amt = parseAmount($("exAmount").value);
   const p = $("exPreview");
   if (from === to) { p.textContent = "서로 다른 돈을 골라 주세요."; return null; }
   if (!(amt >= 1)) { p.textContent = ""; return null; }
@@ -1255,7 +1275,7 @@ function buildBankCards() {
       </dl>
       <p class="bank-sub" data-f="loanInfo"></p>
       <label class="bank-amt">금액
-        <input type="number" min="1" step="1" inputmode="numeric" data-f="amount" placeholder="비우면 가능한 전액">
+        <input type="text" inputmode="numeric" autocomplete="off" data-f="amount" placeholder="비우면 가능한 전액">
       </label>
       <div class="bank-btns">
         <button type="button" data-act="deposit">입금</button>
@@ -1265,6 +1285,9 @@ function buildBankCards() {
       </div>
     </section>`).join("");
 
+  wrap.addEventListener("input", (e) => {
+    if (e.target.matches('[data-f="amount"]')) formatAmountInput(e.target);
+  });
   wrap.addEventListener("click", (e) => {
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
@@ -1300,7 +1323,7 @@ function bankAction(k, act, card) {
   const unit = UNIT[k];
   const input = card.querySelector('[data-f="amount"]');
   const raw = input.value.trim();
-  const typed = raw === "" ? null : Math.floor(Number(raw));
+  const typed = raw === "" ? null : parseAmount(raw);
   if (typed !== null && !(typed >= 1)) return bankMsg("금액은 1 이상의 숫자로 적어 주세요.");
   applyOverdue(now);
 
@@ -1653,13 +1676,14 @@ function wireUi() {
 
   // 상점
   $("buyBoost").addEventListener("click", buyBoost);
+  $("meetBtn").addEventListener("click", () => { $("shopMsg").textContent = "준비중입니다."; });
   $("buyPerm").addEventListener("click", buyPerm);
 
   // 환전
   $("exFrom").addEventListener("change", updateExPreview);
   $("exTo").addEventListener("change", updateExPreview);
-  $("exAmount").addEventListener("input", updateExPreview);
-  $("exAll").addEventListener("click", () => { $("exAmount").value = player.wallet[$("exFrom").value] || ""; updateExPreview(); });
+  $("exAmount").addEventListener("input", () => { formatAmountInput($("exAmount")); updateExPreview(); });
+  $("exAll").addEventListener("click", () => { const n = player.wallet[$("exFrom").value]; $("exAmount").value = n ? won(n) : ""; updateExPreview(); });
   $("exSwap").addEventListener("click", () => {
     const a = $("exFrom").value;
     $("exFrom").value = $("exTo").value;
@@ -1918,7 +1942,7 @@ function earn(e) {
 
   const ctx = ctxOf(journeyState());
   const feverOn = isFever();
-  addWalletKind(ctx.kind, clickValue(ctx, feverOn)); // (피버타임) × (영구 ×10) × (부스트 ×100)
+  addWalletKind(ctx.kind, clickValue(ctx, feverOn)); // (피버타임) × (영구 ×10) × (부스트 ×5)
   player.clicks += 1;
   if (!feverOn) {
     els.status.textContent = "";
