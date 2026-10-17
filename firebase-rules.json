@@ -3,30 +3,30 @@
     ".read": false,
     "v2": {
       "donatedKrw": {
-        ".read": true,
-        ".write": true,
+        ".read": false,
+        ".write": false,
         ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 387000000000 && (!data.exists() || newData.val() >= data.val())"
       },
       "donatedInr": {
-        ".read": true,
-        ".write": true,
+        ".read": false,
+        ".write": false,
         ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 52400000000 && (!data.exists() || newData.val() >= data.val())"
       },
       "usd": {
-        ".read": true,
+        ".read": false,
         "$leg": {
-          ".write": true,
+          ".write": false,
           ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000 && (!data.exists() || newData.val() >= data.val())"
         }
       },
       "leg": {
-        ".read": true,
-        ".write": true,
+        ".read": false,
+        ".write": false,
         ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 1000000 && (!data.exists() || newData.val() >= data.val())"
       },
       "trip": {
-        ".read": true,
-        ".write": true,
+        ".read": false,
+        ".write": false,
         ".validate": "newData.hasChildren(['leg', 'startAt'])",
         "leg": {
           ".validate": "newData.isNumber() && newData.val() >= 0"
@@ -45,8 +45,8 @@
         }
       },
       "fever": {
-        ".read": true,
-        ".write": true,
+        ".read": false,
+        ".write": false,
         ".validate": "newData.hasChildren(['count', 'endAt'])",
         "count": {
           ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 300"
@@ -59,25 +59,25 @@
         }
       },
       "moneyReset": {
-        ".read": true,
+        ".read": false,
         ".validate": "newData.isNumber() && newData.val() >= 0"
       },
       "presence": {
-        ".read": true,
+        ".read": false,
         "$cid": {
-          ".write": true,
+          ".write": false,
           ".validate": "newData.isNumber()"
         }
       },
       "ranking": {
-        ".read": true,
+        ".read": false,
         ".indexOn": [
           "credit",
           "clicks",
           "donated"
         ],
         "$pid": {
-          ".write": true,
+          ".write": false,
           ".validate": "newData.hasChildren(['name', 'credit', 'clicks', 'donated', 'updatedAt'])",
           "name": {
             ".validate": "newData.isString() && newData.val().length >= 1 && newData.val().length <= 12"
@@ -101,8 +101,8 @@
       },
       "players": {
         "$id": {
-          ".read": true,
-          ".write": true,
+          ".read": false,
+          ".write": false,
           ".validate": "$id.length >= 16 && newData.hasChildren(['updatedAt'])"
         }
       },
